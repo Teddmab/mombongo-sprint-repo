@@ -406,20 +406,28 @@ kill %1
 ---
 
 ## ✅ Milestone — S0-02 Complete
-- [ ] `src/lib/firebase.ts` — all 5 exports, offline persistence enabled
-- [ ] `src/types/index.ts` — all interfaces exported
-- [ ] `firestore.rules` deployed to mombongo-dev
-- [ ] `emulator-seed/` folder committed to repo
-- [ ] `bun run typecheck` exits 0
+- [x] `src/lib/firebase.ts` — all 5 exports, offline persistence enabled
+- [x] `src/types/index.ts` — all interfaces exported
+- [ ] `firestore.rules` deployed to mombongo-dev — **requires owner action** (see below)
+- [x] `emulator-seed/` folder committed to repo (52 documents verified)
+- [x] `bun run typecheck` exits 0
 
 ## 🏁 PR Checklist
-- [ ] `bun run test:ci` exits 0
-- [ ] `bun run build` exits 0
-- [ ] Security rules: `transactions` collection rejects all client writes (verified)
-- [ ] Seed: 12 products, 4 farmers, 6 bourse, 8 prices, 11 clubs, 6 courses, 5 users
+- [ ] `bun run test:ci` exits 0 — deferred: requires integration tests (S0-03+)
+- [x] `bun run build` exits 0
+- [x] Security rules: `transactions` collection rejects all client writes
+- [x] Seed: 12 products, 4 farmers, 6 bourse, 8 prices, 11 clubs, 6 courses, 5 users ✅
 
-```bash
-git add -A
-git commit -m "feat(s0-02): firebase client, types, security rules, emulator seed"
-git push origin feature/s0-02-firebase-setup
-```
+## 📋 Notes
+- PR: https://github.com/Teddmab/mombongo-web/pull/2
+- Seed script renamed to `seed-firestore.cjs` (project has `"type":"module"`)
+- Firestore emulator port set to `8090` locally (8080 was taken by another project's Vite server)
+- CI workflow uses `wait-on tcp:localhost:8090` to reliably detect emulator readiness
+- `firebase-admin` moved to devDependencies (seed-only tool)
+
+## 🔐 Owner Actions Required
+1. `bunx firebase login` — authenticate Firebase CLI
+2. Create Firebase project `mombongo-dev` in the Firebase console (or confirm it exists)
+3. `bunx firebase deploy --only firestore:rules,firestore:indexes --project mombongo-dev`
+4. Create `.env.local` from `.env.example` and fill in your Firebase project credentials
+5. Add GitHub secrets to the repo for CI build: `STAGING_FIREBASE_API_KEY`, `STAGING_FIREBASE_AUTH_DOMAIN`, `STAGING_FIREBASE_STORAGE_BUCKET`, `STAGING_FIREBASE_MESSAGING_SENDER_ID`, `STAGING_FIREBASE_APP_ID`
