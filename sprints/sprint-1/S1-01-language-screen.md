@@ -8,57 +8,67 @@
 | Branch | `feature/s1-01-language-screen` |
 | Merges into | `dev` |
 | Owner | Moïse |
-| Estimate | 1.5 hours |
+| Estimate | 0.5 hours |
 | Dependencies | S0-03 (i18n), S0-04 (routing) |
-| Milestone | Day Off 2 |
+
+## Repo Scope
+| Repo | Status | Work |
+|------|--------|------|
+| `mombongo-web` | 🔨 Active | Add `data-testid` to language buttons |
+| `mombongo-admin` | ✅ N/A | Admin has no language selection — internal tool, always FR |
+| `mombongo-mobile` | ⏳ Sprint 2 | Repo not yet initialized |
+| `mombongo-functions` | ⏳ Sprint 2 | Repo not yet initialized |
+| `mombongo-backoffice` | ⏳ Sprint 2 | Repo not yet initialized |
 
 ---
 
-## Step 1 — Language Screen UI
+## mombongo-web
 
-### Lovable Prompt
+### Current State (already implemented — do NOT rewrite)
+
+`src/pages/LanguageSelection.tsx` already contains a full desktop + mobile implementation:
+- ✅ Green gradient background, Mombongo logo, rotating tagline every 3 s (Framer Motion)
+- ✅ 3 language buttons (FR / EN / LN) with stagger entrance animation
+- ✅ `useApp().setLang(lang)` on press → persists to `localStorage` under key `mb_lang` via `AppContext`
+- ✅ `setTimeout(120ms)` → `navigate('/auth')`
+- ✅ Desktop split-panel variant via `useIsDesktop()`
+- ✅ `data-testid="language-screen"` on root element
+
+**File name is `LanguageSelection.tsx`, not `LanguageScreen.tsx`. Keep this name — do not rename.**
+
+### Step 1 — Add data-testid to language buttons
+
+The only missing piece for testability: `data-testid` attributes on the three buttons.
+
+**Mobile buttons** (inside `.space-y-3` list):
+```tsx
+// Before
+<button key={l.code} onClick={() => choose(l.code)} ...>
+
+// After — add data-testid
+<button key={l.code} data-testid={`language-btn-${l.code}`} onClick={() => choose(l.code)} ...>
 ```
-Replace the LanguageScreen stub with a full implementation.
 
-No AppShell. Full-screen standalone.
-Background: linear-gradient(180deg, #1E6B3F 0%, #155130 60%, #0F3D23 100%)
-Vertically center all content.
+**Desktop buttons** (inside `.grid.grid-cols-3` grid):
+```tsx
+// Before
+<button key={l.code} onClick={() => choose(l.code)} ...>
 
-Top section:
-  🌿 emoji (80px font-size)
-  "MOMBONGO" text (white, 36px, font-bold, tracking-widest, mt-4)
-  "Coopérative Agricole Numérique" (white, 14px, opacity-80, mt-2)
-
-Three language buttons (mt-16, flex flex-col gap-4):
-  Each button: w-full, rounded-2xl, py-5 px-6
-  Background: white with opacity-10, hover opacity-20
-  Layout: flex justify-between items-center
-  Left: flag emoji (text-3xl) + language code (text-white font-bold ml-3)
-  Right: native language name (text-white text-sm) + → arrow
-
-  Button 1: data-testid="language-btn-fr" — 🇫🇷 FR — Français
-  Button 2: data-testid="language-btn-en" — 🇬🇧 EN — English
-  Button 3: data-testid="language-btn-ln" — 🇨🇩 LN — Lingala
-
-On button press:
-  1. i18n.changeLanguage(lang)
-  2. localStorage.setItem('mombongo-language', lang)
-  3. Framer Motion: animate selected button scale 0.95 → 1.05 → 1
-  4. setTimeout 300ms → navigate('/auth')
-
-Entrance animation (Framer Motion):
-  Each button: initial={opacity:0, y:60} animate={opacity:1, y:0}
-  Stagger delay: index * 0.1s
+// After — add data-testid
+<button key={l.code} data-testid={`language-btn-${l.code}`} onClick={() => choose(l.code)} ...>
 ```
 
 ### Unit Tests
 File: `src/pages/__tests__/LanguageScreen.test.tsx`
+
+> **Note:** test imports `LanguageSelection` from `@/pages/LanguageSelection` (existing filename).
+
 ```typescript
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MemoryRouter } from 'react-router-dom'
-import LanguageScreen from '@/pages/LanguageScreen'
+import LanguageSelection from '@/pages/LanguageSelection'
 
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async () => ({
@@ -66,59 +76,77 @@ vi.mock('react-router-dom', async () => ({
   useNavigate: () => mockNavigate,
 }))
 
-describe('LanguageScreen', () => {
+vi.mock('@/context/AppContext', () => ({
+  useApp: () => ({ setLang: vi.fn(), lang: 'fr', role: 'investor', userName: 'Alain' }),
+  AppProvider: ({ children }: any) => children,
+}))
+
+describe('LanguageSelection', () => {
   it('renders 3 language buttons', () => {
-    render(<MemoryRouter><LanguageScreen /></MemoryRouter>)
+    render(<MemoryRouter><LanguageSelection /></MemoryRouter>)
+    expect(screen.getAllByTestId(/language-btn-/)).toHaveLength(3)
+  })
+
+  it('renders FR, EN and LN buttons', () => {
+    render(<MemoryRouter><LanguageSelection /></MemoryRouter>)
     expect(screen.getByTestId('language-btn-fr')).toBeInTheDocument()
     expect(screen.getByTestId('language-btn-en')).toBeInTheDocument()
     expect(screen.getByTestId('language-btn-ln')).toBeInTheDocument()
   })
 
-  it('shows MOMBONGO branding', () => {
-    render(<MemoryRouter><LanguageScreen /></MemoryRouter>)
-    expect(screen.getByText('MOMBONGO')).toBeInTheDocument()
+  it('shows Mombongo branding', () => {
+    render(<MemoryRouter><LanguageSelection /></MemoryRouter>)
+    expect(screen.getByAltText(/Mombongo/i)).toBeInTheDocument()
   })
 
-  it('selecting FR saves to localStorage and navigates', async () => {
-    const user = userEvent.setup()
-    render(<MemoryRouter><LanguageScreen /></MemoryRouter>)
+  it('selecting FR calls setLang and eventually navigates to /auth', async () => {
+    vi.useFakeTimers()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    render(<MemoryRouter><LanguageSelection /></MemoryRouter>)
     await user.click(screen.getByTestId('language-btn-fr'))
-    expect(localStorage.getItem('mombongo-language')).toBe('fr')
-    await vi.waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/auth'))
-  })
-
-  it('selecting LN saves Lingala to localStorage', async () => {
-    const user = userEvent.setup()
-    render(<MemoryRouter><LanguageScreen /></MemoryRouter>)
-    await user.click(screen.getByTestId('language-btn-ln'))
-    expect(localStorage.getItem('mombongo-language')).toBe('ln')
+    vi.advanceTimersByTime(200)
+    expect(mockNavigate).toHaveBeenCalledWith('/auth')
+    vi.useRealTimers()
   })
 })
 ```
 
 ### Regression
 ```bash
+# Run from mombongo-web/
 bun run test:unit -- src/pages/__tests__/LanguageScreen.test.tsx
 # Expected: 4 tests pass
 bun run build
+# Expected: exits 0
 ```
 
-📝 Manual: `/language` → click FR → navigates to `/auth`.
+📝 Manual: `/language` → click any button → navigates to `/auth`.
+
+---
+
+## mombongo-admin
+
+No language selection screen in admin — it is an internal operations tool always used in French. The admin app routes directly to `/login` on cold load.
+
+✅ **No changes required for this story.**
 
 ---
 
 ## ✅ Milestone — S1-01 Complete
-- [ ] 4 unit tests pass
-- [ ] Language saves to localStorage on selection
-- [ ] Stagger animation plays on mount
-- [ ] Navigates to /auth after 300ms
+- [ ] **[web]** 4 unit tests pass
+- [ ] **[web]** `data-testid="language-btn-fr/en/ln"` present on all 3 buttons (mobile + desktop)
+- [ ] **[web]** Language saves to `localStorage` key `mb_lang` on selection
+- [ ] **[web]** Navigates to `/auth` after ~120ms
+- [ ] **[admin]** No changes needed — already complete
 
 ## 🏁 PR Checklist
-- [ ] `bun run test:ci` exits 0
-- [ ] No hardcoded strings
+- [ ] `bun run test:ci` exits 0 (web)
+- [ ] `bun run build` exits 0 (web)
+- [ ] No rename of `LanguageSelection.tsx`
 
 ```bash
+# mombongo-web
 git add -A
-git commit -m "feat(s1-01): language selection screen with stagger animation"
+git commit -m "feat(s1-01): add data-testid to language buttons + unit tests"
 git push origin feature/s1-01-language-screen
 ```

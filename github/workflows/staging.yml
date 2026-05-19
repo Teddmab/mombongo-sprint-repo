@@ -12,49 +12,77 @@ env:
   NODE_VERSION: '20'
   JAVA_VERSION: '17'
   FIREBASE_PROJECT: mombongo-dev
-  STAGING_URL: https://staging.mombongo.coop
 
 jobs:
+  # ─────────────────────────────────────────
+  # JOB 1: Full CI (lint + typecheck + unit + integration)
+  # ─────────────────────────────────────────
   ci:
     name: Full CI
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: '${{ env.NODE_VERSION }}' }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - uses: oven-sh/setup-bun@v2
+
       - uses: actions/setup-java@v4
-        with: { distribution: temurin, java-version: '${{ env.JAVA_VERSION }}' }
+        with:
+          distribution: temurin
+          java-version: ${{ env.JAVA_VERSION }}
+
       - name: Cache Firebase Emulator
         uses: actions/cache@v4
         with:
           path: ~/.cache/firebase/emulators
           key: firebase-emulators-${{ runner.os }}-v1
+
       - run: bun install
-      - run: bun run lint && bun run typecheck
+      - run: bun run lint
+      - run: bun run typecheck
       - run: bun run test:unit
+
       - run: bun install -g firebase-tools
-      - name: Start emulator
+
+      - name: Start Firebase Emulator
         run: |
-          firebase emulators:start --only auth,firestore,storage \
-            --project ${{ env.FIREBASE_PROJECT }} --import ./emulator-seed &
+          firebase emulators:start \
+            --only auth,firestore,storage \
+            --project ${{ env.FIREBASE_PROJECT }} \
+            --import ./emulator-seed \
+            &
           npx wait-on http://localhost:4000 --timeout 60000
-      - run: bun run test:integration
+
+      - name: Integration tests
+        run: bun run test:integration
         env:
           FIRESTORE_EMULATOR_HOST: localhost:8080
           FIREBASE_AUTH_EMULATOR_HOST: localhost:9099
+          FIREBASE_STORAGE_EMULATOR_HOST: localhost:9199
 
+  # ─────────────────────────────────────────
+  # JOB 2: Build (staging config)
+  # ─────────────────────────────────────────
   build:
-    name: Build (Staging)
+    name: Build
     runs-on: ubuntu-latest
     needs: ci
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
-        with: { node-version: '${{ env.NODE_VERSION }}' }
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+
       - uses: oven-sh/setup-bun@v2
+
       - run: bun install
-      - run: bun run build
+
+      - name: Build with staging env
+        run: bun run build
         env:
           VITE_FIREBASE_API_KEY: ${{ secrets.STAGING_FIREBASE_API_KEY }}
           VITE_FIREBASE_AUTH_DOMAIN: ${{ secrets.STAGING_FIREBASE_AUTH_DOMAIN }}
@@ -65,56 +93,86 @@ jobs:
           VITE_FIREBASE_VAPID_KEY: ${{ secrets.STAGING_FIREBASE_VAPID_KEY }}
           VITE_ENVIRONMENT: staging
           VITE_CINETPAY_MODE: sandbox
+
       - uses: actions/upload-artifact@v4
         with:
           name: dist-staging
           path: dist/
 
-  deploy-vercel:
-    name: Deploy → Vercel Staging
+  # ─────────────────────────────────────────
+  # JOB 3: Deploy → Cloudflare Pages (staging)
+  # ─────────────────────────────────────────
+  deploy-cloudflare:
+    name: Deploy → Cloudflare Pages (staging)
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      contents: read
+      deployments: write
+    outputs:
+      deployment-url: ${{ steps.deploy.outputs.deployment-url }}
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/download-artifact@v4
-        with: { name: dist-staging, path: dist/ }
-      - uses: amondnet/vercel-action@v25
-        with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          working-directory: dist/
-          alias-domains: staging.mombongo.coop
 
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-staging
+          path: dist/
+
+      - name: Deploy to Cloudflare Pages
+        id: deploy
+        uses: cloudflare/pages-action@v1
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          projectName: mombongo-web           # must match your CF Pages project name
+          directory: dist
+          # Deploys to the "staging" branch alias → staging.mombongo.coop
+          branch: staging
+          gitHubToken: ${{ secrets.GITHUB_TOKEN }}
+
+  # ─────────────────────────────────────────
+  # JOB 4: Deploy Firebase Rules + Indexes
+  # ─────────────────────────────────────────
   deploy-firebase:
-    name: Deploy Firebase Rules + Functions
+    name: Deploy Firebase Rules
     runs-on: ubuntu-latest
     needs: build
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
       - run: bun install -g firebase-tools
-      - run: firebase deploy --only firestore:rules,firestore:indexes,storage:rules
-          --project ${{ env.FIREBASE_PROJECT }} --token ${{ secrets.FIREBASE_TOKEN }}
 
+      - name: Deploy Firestore rules + indexes + storage rules
+        run: |
+          firebase deploy \
+            --only firestore:rules,firestore:indexes,storage:rules \
+            --project ${{ env.FIREBASE_PROJECT }} \
+            --token ${{ secrets.FIREBASE_TOKEN }}
+
+  # ─────────────────────────────────────────
+  # JOB 5: Playwright E2E on staging URL
+  # ─────────────────────────────────────────
   e2e:
     name: Playwright E2E
     runs-on: ubuntu-latest
-    needs: deploy-vercel
+    needs: [deploy-cloudflare, deploy-firebase]
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with: { node-version: '${{ env.NODE_VERSION }}' }
       - uses: oven-sh/setup-bun@v2
       - run: bun install
       - run: bunx playwright install --with-deps chromium
-      - run: bun run test:e2e
+
+      - name: Run E2E tests
+        run: bun run test:e2e
         env:
-          PLAYWRIGHT_BASE_URL: ${{ env.STAGING_URL }}
+          # Cloudflare Pages gives a stable staging alias URL
+          PLAYWRIGHT_BASE_URL: https://staging.mombongo.coop
           TEST_INVESTOR_EMAIL: ${{ secrets.TEST_INVESTOR_EMAIL }}
           TEST_INVESTOR_PASSWORD: ${{ secrets.TEST_INVESTOR_PASSWORD }}
           TEST_ADMIN_EMAIL: ${{ secrets.TEST_ADMIN_EMAIL }}
           TEST_ADMIN_PASSWORD: ${{ secrets.TEST_ADMIN_PASSWORD }}
+
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
@@ -122,6 +180,9 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
+  # ─────────────────────────────────────────
+  # JOB 6: Notify team (WhatsApp)
+  # ─────────────────────────────────────────
   notify:
     name: Notify Team
     runs-on: ubuntu-latest
@@ -133,10 +194,17 @@ jobs:
         run: |
           curl -X POST "${{ secrets.WHATSAPP_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
-            -d '{"message":"✅ *Staging deploy OK*\nURL: ${{ env.STAGING_URL }}\nJuve — please QA on Android device.","group":"team"}'
+            -d '{
+              "message": "✅ *Mombongo Staging Deploy* — OK\nURL: https://staging.mombongo.coop\nAll E2E tests passed.\nJuve — please QA on real Android device.",
+              "group": "team"
+            }'
+
       - name: Notify failure
         if: needs.e2e.result != 'success'
         run: |
           curl -X POST "${{ secrets.WHATSAPP_WEBHOOK_URL }}" \
             -H "Content-Type: application/json" \
-            -d '{"message":"❌ *Staging deploy FAILED*\nCheck GitHub Actions.","group":"team"}'
+            -d '{
+              "message": "❌ *Mombongo Staging Deploy* — FAILED\nCheck GitHub Actions for details.",
+              "group": "team"
+            }'

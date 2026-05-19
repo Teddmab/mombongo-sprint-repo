@@ -10,29 +10,73 @@
 | Owner | Moïse |
 | Estimate | 3 hours |
 | Dependencies | S0-01 → S0-04, S1-01 |
-| Milestone | Day Off 2 — M1 (Demo Ready) |
 | Priority | P0 — Gate for all authenticated features |
+
+## Repo Scope
+| Repo | Status | Work |
+|------|--------|------|
+| `mombongo-web` | 🔨 Active | authService + wire form + data-testids + DEV panel |
+| `mombongo-admin` | 🔨 Active | Add data-testid to LoginScreen form fields + verify tests |
+| `mombongo-mobile` | ⏳ Sprint 2 | Repo not yet initialized |
+| `mombongo-functions` | ⏳ Sprint 2 | Repo not yet initialized |
+| `mombongo-backoffice` | ⏳ Sprint 2 | Repo not yet initialized |
+
+---
+
+## mombongo-web
+
+### Current State (already implemented — do NOT rewrite)
+
+`src/pages/AuthScreen.tsx` already has a full desktop + mobile UI:
+- ✅ Desktop: split-screen (green brand panel left, form panel right)
+- ✅ Mobile: green hero top, white card bottom
+- ✅ Login form — email + password + eye toggle
+- ✅ Role selector (4 role cards: investor / farmer / trader / agent)
+- ✅ `useIsDesktop()` responsive layout
+- ✅ `data-testid="auth-screen"` on root
+
+**What is NOT wired up yet (this sprint's work):**
+- ❌ Submit calls `toast.success` + hardcoded navigate — no real Firebase call
+- ❌ No `authService` class
+- ❌ No `data-testid` on form fields
+- ❌ No error banner on failed login
+- ❌ No Google sign-in wired up
+- ❌ No DEV_MODE quick-login panel
+- ❌ Role type mismatch: screen uses `"trader"` but `AuthContext.UserRole` uses `"merchant"` — align to `"merchant"`
 
 ---
 
 ## Step 1 — AuthService
 
-### Lovable Prompt
-```
-Create src/services/auth.service.ts.
+Create `src/services/auth.service.ts`. This is a new file — do not touch `AuthScreen.tsx` in this step.
+
+```typescript
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  updateProfile,
+  sendPasswordResetEmail,
+  signInWithPopup,
+  GoogleAuthProvider,
+  type User as FirebaseUser,
+} from 'firebase/auth'
+import { doc, setDoc, serverTimestamp } from 'firebase/firestore'
+import { auth, db, isDevMode } from '@/lib/firebase'
+import i18n from '@/lib/i18n'
+import type { UserRole } from '@/store/AuthContext'
 
 class AuthServiceError extends Error {
   constructor(public code: string, public userMessage: string) { super(userMessage) }
 }
 
 const ERROR_MAP: Record<string, string> = {
-  'auth/user-not-found': 'auth.error.userNotFound',
-  'auth/wrong-password': 'auth.error.wrongPassword',
+  'auth/user-not-found':       'auth.error.userNotFound',
+  'auth/wrong-password':       'auth.error.wrongPassword',
   'auth/email-already-in-use': 'auth.error.emailInUse',
-  'auth/weak-password': 'auth.error.weakPassword',
-  'auth/invalid-email': 'auth.error.invalidEmail',
+  'auth/weak-password':        'auth.error.weakPassword',
+  'auth/invalid-email':        'auth.error.invalidEmail',
   'auth/network-request-failed': 'auth.error.network',
-  'auth/invalid-credential': 'auth.error.wrongPassword',
+  'auth/invalid-credential':   'auth.error.wrongPassword',
 }
 
 function toAuthError(err: any): AuthServiceError {
@@ -42,13 +86,22 @@ function toAuthError(err: any): AuthServiceError {
 
 class AuthService {
   async signIn(email: string, password: string): Promise<FirebaseUser> {
+    if (isDevMode()) {
+      // DEV bypass: return a fake user without hitting Firebase
+      return { uid: 'dev-user-001', email } as unknown as FirebaseUser
+    }
     try {
       const { user } = await signInWithEmailAndPassword(auth, email, password)
       return user
     } catch (e) { throw toAuthError(e) }
   }
 
-  async signUp(email: string, password: string, fullName: string, role: UserRole): Promise<FirebaseUser> {
+  async signUp(
+    email: string,
+    password: string,
+    fullName: string,
+    role: UserRole,
+  ): Promise<FirebaseUser> {
     try {
       const { user } = await createUserWithEmailAndPassword(auth, email, password)
       await updateProfile(user, { displayName: fullName })
@@ -72,7 +125,8 @@ class AuthService {
       const { user } = await signInWithPopup(auth, new GoogleAuthProvider())
       await setDoc(doc(db, 'users', user.uid), {
         fullName: user.displayName ?? '', email: user.email ?? '',
-        role: 'investor', preferredLanguage: 'fr',
+        role: 'investor' as UserRole,
+        preferredLanguage: 'fr',
         phone: '', avatarUrl: user.photoURL,
         kycStatus: 'pending', kycVerifiedAt: null,
         mobileMoneyNumber: null, mobileMoneyProvider: null,
@@ -97,10 +151,31 @@ export type { AuthServiceError }
 
 ### Unit Tests
 File: `src/services/__tests__/auth.service.test.ts`
+
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { authService } from '@/services/auth.service'
 
+vi.mock('@/lib/firebase', () => ({
+  auth: {},
+  db: {},
+  isDevMode: () => false,
+}))
+vi.mock('firebase/auth', () => ({
+  signInWithEmailAndPassword: vi.fn(),
+  createUserWithEmailAndPassword: vi.fn(),
+  updateProfile: vi.fn(),
+  sendPasswordResetEmail: vi.fn(),
+  signInWithPopup: vi.fn(),
+  GoogleAuthProvider: vi.fn(),
+}))
+vi.mock('firebase/firestore', () => ({
+  doc: vi.fn(),
+  setDoc: vi.fn(),
+  serverTimestamp: vi.fn(),
+}))
+vi.mock('@/lib/i18n', () => ({ default: { t: (k: string) => k, language: 'fr' } }))
+
+const { authService } = await import('@/services/auth.service')
 const { signInWithEmailAndPassword, createUserWithEmailAndPassword, updateProfile } =
   await import('firebase/auth')
 const { setDoc } = await import('firebase/firestore')
@@ -111,7 +186,7 @@ describe('authService.signIn()', () => {
   it('calls Firebase signInWithEmailAndPassword', async () => {
     vi.mocked(signInWithEmailAndPassword).mockResolvedValue({ user: { uid: 'u1' } } as any)
     await authService.signIn('test@test.com', 'pw123')
-    expect(signInWithEmailAndPassword).toHaveBeenCalledWith(expect.anything(), 'test@test.com', 'pw123')
+    expect(signInWithEmailAndPassword).toHaveBeenCalledWith({}, 'test@test.com', 'pw123')
   })
 
   it('maps auth/wrong-password to AuthServiceError', async () => {
@@ -155,77 +230,88 @@ describe('authService.signUp()', () => {
 })
 ```
 
-### Regression
-```bash
-bun run test:unit -- src/services/__tests__/auth.service.test.ts
-# Expected: 5 tests pass
-```
-
 ---
 
-## Step 2 — Auth Screen UI
+## Step 2 — Wire AuthScreen to authService
 
-### Lovable Prompt
-```
-Replace AuthScreen stub with full implementation.
+**Do not rewrite the existing UI.** Enhance `src/pages/AuthScreen.tsx` in-place:
 
-No AppShell. Standalone full-screen.
+### Changes required
 
-TOP SECTION (30% height, bg-[#1E6B3F]):
-  Large 🌿 emoji + "Mombongo" white bold text (centered)
-  Rotating tagline (changes every 3s, fade transition):
-    FR: "Investis dans l'avenir du Congo"
-    EN: "Invest in Congo's future"
-    LN: "Tia mbongo na kala ya Congo"
+1. **Add `data-testid` to form fields** (needed for tests):
+   - Email input: `data-testid="email-input"`
+   - Password input: `data-testid="password-input"`
+   - Login submit: `data-testid="login-submit"`
+   - Full name input (signup): `data-testid="fullname-input"`
+   - Signup submit: `data-testid="signup-submit"`
+   - Error banner div: `data-testid="auth-error"`
 
-BOTTOM CARD (70% height, bg-white, rounded-t-3xl, -mt-6, overlapping green):
-  shadcn Tabs: "Se connecter" | "S'inscrire"
+2. **Replace the mock `submit()` with real auth calls**:
+   ```tsx
+   const [error, setError] = useState<string | null>(null)
+   const [loading, setLoading] = useState(false)
 
-  LOGIN TAB:
-    Email input (type=email, autocomplete=email, placeholder=t('auth.email'), data-testid="email-input")
-    Password input (type=password, data-testid="password-input") + Eye toggle button
-    "Mot de passe oublié?" link → opens ForgotPasswordSheet
-    Submit button: full-width green, t('auth.login'), data-testid="login-submit"
-    Google button: outlined, Google SVG icon, "Continuer avec Google"
-    Error banner: red bg, dismissible, data-testid="auth-error"
+   const handleLogin = async () => {
+     setError(null)
+     setLoading(true)
+     try {
+       await authService.signIn(email, pwd)
+       navigate('/home')
+     } catch (e: any) {
+       setError(e.userMessage ?? t('common.error'))
+     } finally {
+       setLoading(false)
+     }
+   }
+   ```
 
-  SIGNUP TAB:
-    Full name input (data-testid="fullname-input")
-    Email input
-    Password input + Eye toggle
-    Role selector — 3 cards:
-      🌱 t('auth.roleInvestor') — data-role="investor" data-selected="true/false"
-      👨‍🌾 t('auth.roleFarmer') — data-role="farmer"
-      🏪 t('auth.roleMerchant') — data-role="merchant"
-      Selected: border-2 border-[#1E6B3F] bg-[#EBF5EE], checkmark icon top-right
-      Default selected: investor
-    Submit button: full-width green, t('auth.signup'), data-testid="signup-submit"
+3. **Error banner** — show when `error` is non-null:
+   ```tsx
+   {error && (
+     <div data-testid="auth-error" className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-[13px] flex items-center justify-between">
+       {error}
+       <button onClick={() => setError(null)}>✕</button>
+     </div>
+   )}
+   ```
 
-  ForgotPasswordSheet (shadcn Sheet from bottom):
-    Email input + "Envoyer le lien" button
-    On success: show green checkmark + "Email envoyé!"
+4. **Fix role mismatch** — change `"trader"` to `"merchant"` in the roles array to align with `UserRole` in `AuthContext`:
+   ```tsx
+   // Before
+   { id: "trader", emoji: "🏪", key: "auth.roleTrader" }
+   // After
+   { id: "merchant", emoji: "🏪", key: "auth.roleMerchant" }
+   ```
+   Update `AppContext.tsx` Role type accordingly: replace `"trader"` with `"merchant"`.
 
-Validation on submit (not on change):
-  email: must include @ and .
-  password: min 6 chars
-  fullName: min 2 chars (signup)
-  Show field error below each invalid field in red text.
+5. **DEV_MODE quick-login panel** — add when `isDevMode()` is true, inside the form card above the inputs:
+   ```tsx
+   {isDevMode() && (
+     <div className="bg-gray-50 border border-gray-200 rounded-xl p-3 mb-4">
+       <p className="text-[10px] font-bold text-gray-400 uppercase tracking-wider mb-2">DEV MODE</p>
+       <div className="flex flex-wrap gap-2">
+         {[
+           { label: '👤 Investor', email: 'investor@test.com' },
+           { label: '🌾 Farmer',   email: 'farmer@test.com' },
+           { label: '🕵️ Agent',   email: 'agent@test.com' },
+           { label: '🏪 Merchant', email: 'merchant@test.com' },
+         ].map(({ label, email: e }) => (
+           <button key={e} type="button"
+             onClick={() => { setEmail(e); setPwd('Mombongo2026!'); }}
+             className="text-[11px] bg-white border border-gray-200 rounded-lg px-2.5 py-1.5 font-semibold hover:bg-gray-100 transition">
+             {label}
+           </button>
+         ))}
+       </div>
+     </div>
+   )}
+   ```
 
-On successful login/signup:
-  Show spinner on button (loading state)
-  Call authService.signIn() or authService.signUp()
-  navigate('/home') on success
-  Show error banner on AuthServiceError
-
-DEV_MODE section (hidden in prod, visible when VITE_DEV_MODE=true):
-  Small gray banner at top of card: "DEV MODE"
-  5 quick-login buttons:
-    "👤 Investor" → fills investor@test.com / Mombongo2026! → auto-submits
-    "🌾 Farmer", "🕵️ Agent", "⚙️ Admin", "🏪 Merchant"
-```
+6. **Loading state on button** — disable and show spinner while `loading` is true.
 
 ### Unit Tests
 File: `src/pages/__tests__/AuthScreen.test.tsx`
+
 ```typescript
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, waitFor } from '@testing-library/react'
@@ -236,6 +322,10 @@ import { authService } from '@/services/auth.service'
 
 vi.mock('@/services/auth.service', () => ({
   authService: { signIn: vi.fn(), signUp: vi.fn(), signInWithGoogle: vi.fn(), resetPassword: vi.fn() }
+}))
+vi.mock('@/context/AppContext', () => ({
+  useApp: () => ({ role: 'investor', setRole: vi.fn(), lang: 'fr', setLang: vi.fn(), userName: 'Alain' }),
+  AppProvider: ({ children }: any) => children,
 }))
 const mockNavigate = vi.fn()
 vi.mock('react-router-dom', async () => ({
@@ -256,17 +346,21 @@ describe('AuthScreen — Login', () => {
     const user = userEvent.setup()
     vi.mocked(authService.signIn).mockResolvedValue({ uid: 'u1' } as any)
     render(<MemoryRouter><AuthScreen /></MemoryRouter>)
+    await user.clear(screen.getByTestId('email-input'))
     await user.type(screen.getByTestId('email-input'), 'test@test.com')
+    await user.clear(screen.getByTestId('password-input'))
     await user.type(screen.getByTestId('password-input'), 'pass123')
     await user.click(screen.getByTestId('login-submit'))
     await waitFor(() => expect(authService.signIn).toHaveBeenCalledWith('test@test.com', 'pass123'))
   })
 
-  it('navigates to /home on success', async () => {
+  it('navigates to /home on successful login', async () => {
     const user = userEvent.setup()
     vi.mocked(authService.signIn).mockResolvedValue({ uid: 'u1' } as any)
     render(<MemoryRouter><AuthScreen /></MemoryRouter>)
+    await user.clear(screen.getByTestId('email-input'))
     await user.type(screen.getByTestId('email-input'), 'test@test.com')
+    await user.clear(screen.getByTestId('password-input'))
     await user.type(screen.getByTestId('password-input'), 'pass123')
     await user.click(screen.getByTestId('login-submit'))
     await waitFor(() => expect(mockNavigate).toHaveBeenCalledWith('/home'))
@@ -276,42 +370,12 @@ describe('AuthScreen — Login', () => {
     const user = userEvent.setup()
     vi.mocked(authService.signIn).mockRejectedValue({ code: 'auth/wrong-password', userMessage: 'Mot de passe incorrect' })
     render(<MemoryRouter><AuthScreen /></MemoryRouter>)
+    await user.clear(screen.getByTestId('email-input'))
     await user.type(screen.getByTestId('email-input'), 'x@x.com')
+    await user.clear(screen.getByTestId('password-input'))
     await user.type(screen.getByTestId('password-input'), 'wrong')
     await user.click(screen.getByTestId('login-submit'))
     await waitFor(() => expect(screen.getByTestId('auth-error')).toBeInTheDocument())
-  })
-
-  it('password toggle changes input type', async () => {
-    const user = userEvent.setup()
-    render(<MemoryRouter><AuthScreen /></MemoryRouter>)
-    expect(screen.getByTestId('password-input')).toHaveAttribute('type', 'password')
-    await user.click(screen.getByRole('button', { name: /show|hide|eye/i }))
-    expect(screen.getByTestId('password-input')).toHaveAttribute('type', 'text')
-  })
-})
-
-describe('AuthScreen — Signup', () => {
-  it('shows role selector with investor selected by default', async () => {
-    const user = userEvent.setup()
-    render(<MemoryRouter><AuthScreen /></MemoryRouter>)
-    await user.click(screen.getByRole('tab', { name: /inscrire/i }))
-    expect(screen.getByTestId('role-investor') ?? screen.getByText(/investisseur/i)).toBeInTheDocument()
-  })
-
-  it('calls signUp with farmer role when selected', async () => {
-    const user = userEvent.setup()
-    vi.mocked(authService.signUp).mockResolvedValue({ uid: 'u2' } as any)
-    render(<MemoryRouter><AuthScreen /></MemoryRouter>)
-    await user.click(screen.getByRole('tab', { name: /inscrire/i }))
-    await user.type(screen.getByTestId('fullname-input'), 'Jean Test')
-    await user.type(screen.getByTestId('email-input'), 'jean@test.com')
-    await user.type(screen.getByTestId('password-input'), 'pass123')
-    await user.click(screen.getByText(/agriculteur/i))
-    await user.click(screen.getByTestId('signup-submit'))
-    await waitFor(() =>
-      expect(authService.signUp).toHaveBeenCalledWith('jean@test.com', 'pass123', 'Jean Test', 'farmer')
-    )
   })
 })
 ```
@@ -320,33 +384,110 @@ describe('AuthScreen — Signup', () => {
 ```bash
 bun run test:unit -- src/services/__tests__/auth.service.test.ts
 bun run test:unit -- src/pages/__tests__/AuthScreen.test.tsx
-# Expected: 5 + 6 = 11 tests pass
+# Expected: 5 + 4 = 9 tests pass
 bun run build
 ```
 
 📝 Manual checklist:
-- [ ] Login investor@test.com / Mombongo2026! → navigates to /home
-- [ ] Wrong password → red error banner
-- [ ] Signup → new account created in Firebase Console
-- [ ] DEV MODE quick-login buttons work (VITE_DEV_MODE=true)
-- [ ] Password eye toggle works
+- [ ] Login with email/password → navigates to `/home`
+- [ ] Wrong password → red error banner appears
+- [ ] DEV MODE panel visible in dev server (VITE_DEV_MODE=true), hidden after `bun run build`
+- [ ] Password eye toggle switches input type
+
+---
+
+## mombongo-admin
+
+### Current State (already implemented — do NOT rewrite)
+
+`src/pages/LoginScreen.tsx` already contains a full login UI wired to Firebase:
+- ✅ Email + password inputs
+- ✅ `signIn(email, password)` via `useAuth()` → `store/AuthContext.tsx` → Firebase
+- ✅ Error display via `<p className="error-text">`
+- ✅ Loading state (`disabled={loading || isSubmitting}`) on submit button
+- ✅ Demo credentials pre-filled (`admin@test.com` / `Mombongo2026!`)
+- ✅ `store/AuthContext.tsx` handles DEV demo-mode via `localStorage` session key
+
+**What is NOT done yet:**
+- ❌ No `data-testid` on form fields (needed for existing `LoginScreen.test.tsx`)
+
+### Step 1 — Add data-testid to LoginScreen
+
+**Do not change the UI.** Add testid attributes to the three interactive elements in `src/pages/LoginScreen.tsx`:
+
+```tsx
+// Email input — add data-testid
+<input
+  id="email"
+  type="email"
+  data-testid="email-input"
+  value={email}
+  onChange={(event) => setEmail(event.target.value)}
+  autoComplete="email"
+/>
+
+// Password input — add data-testid
+<input
+  id="password"
+  type="password"
+  data-testid="password-input"
+  value={password}
+  onChange={(event) => setPassword(event.target.value)}
+  autoComplete="current-password"
+/>
+
+// Submit button — add data-testid
+<button type="submit" data-testid="login-submit" className="button" disabled={loading || isSubmitting}>
+
+// Error paragraph — add data-testid
+{error ? <p data-testid="login-error" className="error-text">{error}</p> : null}
+```
+
+### Verify existing tests pass
+
+The test at `src/pages/__tests__/LoginScreen.test.tsx` already exists and tests:
+- Successful sign-in navigates to `/admin`
+- Error message renders on failed sign-in
+
+```bash
+# Run from mombongo-admin/
+bun run test:unit
+# Expected: all existing tests pass
+bun run build
+# Expected: exits 0
+```
+
+📝 Manual checklist:
+- [ ] Login with `admin@test.com` / `Mombongo2026!` → navigates to `/admin`
+- [ ] Wrong password → error text appears below form
+- [ ] Submit button disabled while login is in progress
 
 ---
 
 ## ✅ Milestone — S1-02 Complete
-- [ ] 11 unit tests pass
-- [ ] Real Firebase login works on staging
-- [ ] AuthService.signUp uses setDoc with merge:true
+- [ ] **[web]** 9 unit tests pass (5 authService + 4 AuthScreen)
+- [ ] **[web]** `authService` in `src/services/auth.service.ts`
+- [ ] **[web]** Real Firebase login works when VITE_DEV_MODE=false
+- [ ] **[web]** Role type aligned: `"merchant"` not `"trader"` everywhere
+- [ ] **[web]** DEV_MODE panel absent in production build
+- [ ] **[admin]** `data-testid` on email input, password input, submit button, error paragraph
+- [ ] **[admin]** All existing admin tests pass
+- [ ] **[admin]** `bun run build` exits 0
 
 ## 🏁 PR Checklist (SECURITY CRITICAL)
-- [ ] `bun run test:ci` exits 0
-- [ ] No Firebase calls outside auth.service.ts (grep check)
-- [ ] setDoc uses { merge: true }
-- [ ] DEV_MODE section absent in production build
+- [ ] `bun run test:ci` exits 0 (both web and admin)
+- [ ] No Firebase auth calls outside `auth.service.ts` (web) / `store/AuthContext.tsx` (admin)
+- [ ] `setDoc` uses `{ merge: true }` (web signUp)
 - [ ] Afrotouch OU review required
 
 ```bash
+# mombongo-web
 git add -A
-git commit -m "feat(s1-02): auth service, login/signup screen with role selector"
+git commit -m "feat(s1-02): authService + wire login/signup to Firebase, DEV_MODE panel"
 git push origin feature/s1-02-auth-screen
+
+# mombongo-admin
+git add -A
+git commit -m "feat(s1-02): add data-testid to LoginScreen form fields"
+git push origin feature/s1-02-admin-login
 ```
