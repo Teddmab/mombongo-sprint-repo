@@ -13,10 +13,11 @@
 
 ## Scope — `mombongo-web` + `mombongo-sprint-repo`
 
-Three areas:
+Four areas:
 1. Fix 2 broken routing unit tests introduced by SP-02 changes to `AppContext`
 2. Sprint doc maintenance — update 3 stale docs, rename 7 mismatched files, establish DONE convention
 3. Implement S2-01 — wire `/market` investor view to `useProducts` (first screen off mock data)
+4. Replace all CinetPay references with **PawaPay** (mobile money) + **Stripe** (Visa/Mastercard)
 
 ---
 
@@ -45,7 +46,7 @@ Two tests broke:
 | File | What changed |
 |------|-------------|
 | `sprint-4-financing/S4-03-agent-report.md` | Added "Status: UI complete via SP-02" section. SP-02 built the full 601-line role-dispatched form. Remaining work scoped to: wire farmer selector + submit handler to Firestore/Functions. |
-| `sprint-6-payments-and-notifications/S6-01-cinetpay-deposit.md` | Added "Status: Wallet UI complete via SP-02" section. SP-02 built `WalletModals.tsx` (439 lines) with `DepositModal` + `WithdrawModal`. Remaining work scoped to: `initiateCinetPayDeposit` Cloud Function + `cinetpayWebhook` + replace mock submit. |
+| `sprint-6-payments-and-notifications/S6-01-payments.md` | Added "Status: Wallet UI complete via SP-02." Completely rewritten: CinetPay removed, replaced with **PawaPay** (mobile money — `initiateDeposit`, `pawapayWebhook`, `initiateWithdraw`) + **Stripe** (card — `createStripePaymentIntent`, `stripeWebhook`). |
 | `sprint-2-marketplace/S2-01-product-list.md` | Added "Current State" clarification: `useProducts.ts` exists from S1-03; `MarketScreen.tsx` was extended with role views in SP-01; investor view (`DesktopMarket` / `MobileMarket`) still imports from mock. Scope now explicitly targets investor view only. |
 
 #### 2b. Mismatched file names corrected
@@ -54,7 +55,7 @@ Sprint 6 — file names previously reflected a discarded admin-screen plan:
 
 | Old name | New name | Content |
 |----------|----------|---------|
-| `S6-01-admin-dashboard.md` | `S6-01-cinetpay-deposit.md` | CinetPay Wallet Deposit Flow |
+| `S6-01-admin-dashboard.md` | `S6-01-payments.md` | PawaPay Mobile Money + Stripe Card Flow |
 | `S6-02-admin-users.md` | `S6-02-fcm-notifications.md` | FCM Push Notifications |
 | `S6-03-admin-financing.md` | `S6-03-admin-users.md` | Admin User Management |
 | `S6-04-admin-bourse.md` | `S6-04-admin-kpi-dashboard.md` | Admin Enhanced KPI Dashboard |
@@ -102,7 +103,10 @@ This convention is documented in `CLAUDE.md` at the project root.
 | `src/pages/__tests__/MarketScreen.test.tsx` | mombongo-web | New — 3 unit tests |
 | `sprints/sprint-2-marketplace/S2-01-product-list.md` | sprint-repo | Updated current state |
 | `sprints/sprint-4-financing/S4-03-agent-report.md` | sprint-repo | UI-done status + scoped remaining work |
-| `sprints/sprint-6-payments-and-notifications/S6-01-cinetpay-deposit.md` | sprint-repo | UI-done status + scoped remaining work |
+| `sprints/sprint-6-payments-and-notifications/S6-01-payments.md` | sprint-repo | UI-done status + fully rewritten for PawaPay + Stripe |
+| `sprints/sprint-7-pwa-and-production/S7-04-production-deploy.md` | sprint-repo | CinetPay secrets → PawaPay + Stripe secrets |
+| `sprints/sprint-7-pwa-and-production/S7-05-production-deploy.md` | sprint-repo | CinetPay post-launch check → PawaPay + Stripe |
+| `sprints/sprint-0-infrastructure - DONE/S0-01-repo-setup.md` | sprint-repo | `VITE_CINETPAY_MODE` → `VITE_STRIPE_PUBLISHABLE_KEY` + `VITE_PAWAPAY_ENV` |
 | 7 sprint files renamed | sprint-repo | Filename → content alignment |
 | `CLAUDE.md` | mombongo-web | Created with DONE convention + sprint workflow |
 

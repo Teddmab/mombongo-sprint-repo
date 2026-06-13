@@ -320,7 +320,8 @@ VITE_FIREBASE_APP_ID=
 VITE_FIREBASE_VAPID_KEY=
 VITE_ENVIRONMENT=development
 VITE_DEV_MODE=true
-VITE_CINETPAY_MODE=sandbox
+VITE_STRIPE_PUBLISHABLE_KEY=pk_test_...
+VITE_PAWAPAY_ENV=sandbox
 EOF
 
 grep ".env.local" .gitignore || echo ".env.local" >> .gitignore

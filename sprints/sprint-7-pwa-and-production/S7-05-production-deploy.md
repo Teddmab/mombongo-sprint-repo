@@ -135,7 +135,7 @@ logEvent(analytics, 'course_enrolled', { course_id: courseId })
 // On deposit initiated
 logEvent(analytics, 'deposit_initiated', { amount_usd: amount, currency })
 
-// On wallet deposit confirmed (after CinetPay return)
+// On wallet deposit confirmed (after PawaPay webhook or Stripe webhook)
 logEvent(analytics, 'deposit_completed', { amount_usd: amount })
 ```
 
@@ -212,7 +212,8 @@ After first production deploy, verify:
 
 1. **Auth** — sign up with a real email, verify Firebase Auth console shows the user
 2. **Firestore** — create a test investment in dev mode, verify document appears in Firestore console
-3. **CinetPay** — test with CinetPay sandbox credentials, verify webhook fires and wallet updates
+3. **PawaPay** — test with PawaPay sandbox, trigger STK push on a test number, verify `pawapayWebhook` fires and wallet credits
+   **Stripe** — run a test card payment (`4242 4242 4242 4242`), verify `stripeWebhook` fires and wallet credits
 4. **FCM** — trigger a test investment, verify push notification appears on a real device
 5. **Analytics** — check Firebase Analytics Realtime view shows `investment_created` event
 6. **Sentry** — trigger a test error in staging, verify it appears in Sentry dashboard

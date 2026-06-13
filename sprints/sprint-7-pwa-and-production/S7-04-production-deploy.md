@@ -95,17 +95,22 @@ npm run test:firestore-rules   # (add this script if not present)
 
 Ensure `functions/.env.production` has:
 ```
-CINETPAY_API_KEY=...
-CINETPAY_SITE_ID=...
-CINETPAY_SECRET_KEY=...
-CINETPAY_NOTIFY_URL=https://us-central1-mombongo-prod.cloudfunctions.net/cinetpayWebhook
+# PawaPay (mobile money — primary for DRC)
+PAWAPAY_API_KEY=...
+PAWAPAY_ENVIRONMENT=production
+PAWAPAY_WEBHOOK_SECRET=...
+
+# Stripe (Visa / Mastercard)
+STRIPE_SECRET_KEY=sk_live_...
+STRIPE_WEBHOOK_SECRET=whsec_...
 ```
 
 Set via Firebase CLI:
 ```bash
-firebase functions:secrets:set CINETPAY_API_KEY
-firebase functions:secrets:set CINETPAY_SITE_ID
-firebase functions:secrets:set CINETPAY_SECRET_KEY
+firebase functions:secrets:set PAWAPAY_API_KEY
+firebase functions:secrets:set PAWAPAY_WEBHOOK_SECRET
+firebase functions:secrets:set STRIPE_SECRET_KEY
+firebase functions:secrets:set STRIPE_WEBHOOK_SECRET
 ```
 
 ---
@@ -258,7 +263,7 @@ firebase deploy --only hosting:admin
 ## ✅ Definition of Done
 - [ ] Firestore indexes deployed to production
 - [ ] Firestore security rules pass emulator test suite
-- [ ] CinetPay secrets set via `firebase functions:secrets:set`
+- [ ] PawaPay and Stripe secrets set via `firebase functions:secrets:set`
 - [ ] GitHub Actions deploys web on push to `main`
 - [ ] GitHub Actions deploys functions on push to `main`
 - [ ] `npm run build` exits 0 for all repos
