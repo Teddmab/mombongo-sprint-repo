@@ -27,9 +27,11 @@ Create `src/hooks/useFinancing.ts`:
 
 ```typescript
 import { useQuery } from '@tanstack/react-query'
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore'
-import { db, isDevMode } from '@/lib/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { functions, isDevMode } from '@/lib/firebase'
 import { farmers as MOCK_FARMERS } from '@/data/mock'
+
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
 
 export interface Farmer {
   id: string
@@ -48,21 +50,21 @@ export function useFarmers(filters?: { cropType?: string; region?: string; statu
   return useQuery({
     queryKey: ['farmers', filters],
     queryFn: async () => {
-      if (isDevMode()) return MOCK_FARMERS as unknown as Farmer[]
-      let q = query(
-        collection(db, 'farmers'),
-        where('status', 'in', ['approved', 'active']),
-        orderBy('createdAt', 'desc')
-      )
-      const snap = await getDocs(q)
-      let results = snap.docs.map(d => ({ id: d.id, ...d.data() } as Farmer))
-      if (filters?.cropType) results = results.filter(f => f.cropType === filters.cropType)
-      if (filters?.region)   results = results.filter(f => f.region === filters.region)
-      return results
+      if (isDevMode()) {
+        let results = MOCK_FARMERS as unknown as Farmer[]
+        if (filters?.cropType) results = results.filter(f => f.cropType === filters.cropType)
+        if (filters?.region)   results = results.filter(f => f.region === filters.region)
+        return results
+      }
+      const result = await httpsCallable<typeof filters, { farmers: Farmer[] }>(functions, 'getFarmers')(filters ?? {})
+      return result.data.farmers
     },
     staleTime: 60_000,
   })
 }
+```
+
+> **`mombongo-functions` dependency**: `getFarmers` onCall — accepts optional `{ cropType?, region? }` filters, queries `farmers` (status in `['approved','active']`) ordered by `createdAt` desc, applies filter server-side, returns `{ farmers: [...] }`.
 ```
 
 Add mock data to `src/data/mock.ts`:

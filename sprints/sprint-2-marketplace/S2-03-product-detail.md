@@ -28,20 +28,22 @@
 
 Add to `src/hooks/useProducts.ts`:
 ```typescript
-import { doc, getDoc } from 'firebase/firestore'
+// No Firestore SDK here — all reads go through Cloud Functions (db is not exported from firebase.ts)
 
 export function useProduct(id: string) {
   return useQuery({
     queryKey: ['product', id],
     queryFn: async () => {
       if (isDevMode()) return MOCK_PRODUCTS.find(p => p.id === id) ?? null
-      const snap = await getDoc(doc(db, 'products', id))
-      return snap.exists() ? ({ id: snap.id, ...snap.data() } as Product) : null
+      const result = await httpsCallable<{ id: string }, { product: Product | null }>(functions, 'getProduct')({ id })
+      return result.data.product
     },
     enabled: !!id,
   })
 }
 ```
+
+> **`mombongo-functions` dependency**: `getProduct` onCall must exist — receives `{ id }`, queries `db.collection('products').doc(id)`, returns `{ product: data | null }`.
 
 ### Step 2 — Wire ProductDetailScreen
 

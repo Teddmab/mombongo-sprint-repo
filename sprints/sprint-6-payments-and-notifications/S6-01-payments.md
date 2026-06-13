@@ -347,7 +347,7 @@ async function handleMobileMoneyDeposit() {
 }
 ```
 
-Poll deposit status via `onSnapshot` on the `deposits` doc — update UI when `status === 'completed'`.
+Poll deposit status via `httpsCallable(functions, 'getDepositStatus')({ depositId })` inside a `useQuery` with `refetchInterval: 3000`. Stop polling when `status === 'completed'` (set `enabled: status !== 'completed'`). No `onSnapshot` — `db` is not accessible from the frontend.
 
 ### Wire DepositModal — Card (new tab)
 

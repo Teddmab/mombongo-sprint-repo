@@ -26,8 +26,8 @@
 Create `src/hooks/useInvestments.ts`:
 ```typescript
 import { useQuery } from '@tanstack/react-query'
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore'
-import { db, isDevMode } from '@/lib/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { functions, isDevMode } from '@/lib/firebase'
 import { useAuth } from '@/hooks/useAuth'
 import { investments as MOCK } from '@/data/mock'
 
@@ -52,19 +52,16 @@ export function useInvestments() {
     queryFn: async () => {
       if (!user?.uid) return []
       if (isDevMode()) return MOCK as unknown as Investment[]
-      const snap = await getDocs(
-        query(
-          collection(db, 'investments'),
-          where('investorId', '==', user.uid),
-          orderBy('investedAt', 'desc')
-        )
-      )
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Investment))
+      const result = await httpsCallable<Record<string, never>, { investments: Investment[] }>(functions, 'getInvestments')({})
+      return result.data.investments
     },
     enabled: !!user?.uid,
     staleTime: 60_000,
   })
 }
+```
+
+> **`mombongo-functions` dependency**: `getInvestments` onCall — reads `investments` where `investorId == context.auth.uid`, ordered by `investedAt` desc, returns `{ investments: [...] }`.
 
 export function usePortfolioStats(investments: Investment[]) {
   const active = investments.filter(i => i.status === 'active')
@@ -153,7 +150,7 @@ portfolio.emptyDesc   → "Explorez le marché pour investir." / "Explore the ma
 ## Unit Tests — `src/hooks/__tests__/useInvestments.test.ts`
 
 ```typescript
-vi.mock('@/lib/firebase', () => ({ db: {}, isDevMode: vi.fn(() => false) }))
+vi.mock('@/lib/firebase', () => ({ functions: {}, isDevMode: vi.fn(() => false) }))
 vi.mock('@/hooks/useAuth', () => ({ useAuth: () => ({ user: { uid: 'u1' } }) }))
 
 describe('usePortfolioStats', () => {

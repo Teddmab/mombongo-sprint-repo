@@ -35,19 +35,26 @@ export interface CulturalEvent {
   description: string
 }
 
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
+
 export function useCulturalEvents(cropType?: string) {
   return useQuery({
     queryKey: ['cultural-events', cropType],
     queryFn: async () => {
-      if (isDevMode()) return MOCK_CULTURAL_EVENTS as unknown as CulturalEvent[]
-      const snap = await getDocs(collection(db, 'cultural_events'))
-      let events = snap.docs.map(d => ({ id: d.id, ...d.data() } as CulturalEvent))
-      if (cropType) events = events.filter(e => e.cropType === cropType)
-      return events.sort((a, b) => a.monthStart - b.monthStart)
+      if (isDevMode()) {
+        let events = MOCK_CULTURAL_EVENTS as unknown as CulturalEvent[]
+        if (cropType) events = events.filter(e => e.cropType === cropType)
+        return events.sort((a, b) => a.monthStart - b.monthStart)
+      }
+      const result = await httpsCallable<{ cropType?: string }, { events: CulturalEvent[] }>(functions, 'getCulturalEvents')({ cropType })
+      return result.data.events.sort((a, b) => a.monthStart - b.monthStart)
     },
     staleTime: 3_600_000,  // calendar data rarely changes
   })
 }
+// import { httpsCallable } from 'firebase/functions'
+// import { functions, isDevMode } from '@/lib/firebase'
+// (add these to the imports at the top of useFinancing.ts)
 ```
 
 Add mock data to `src/data/mock.ts`:
@@ -149,7 +156,7 @@ import { useCulturalEvents } from '@/hooks/useFinancing'
 
 describe('useCulturalEvents mock', () => {
   it('returns events sorted by monthStart', async () => {
-    vi.mock('@/lib/firebase', () => ({ db: {}, isDevMode: vi.fn(() => true) }))
+    vi.mock('@/lib/firebase', () => ({ functions: {}, isDevMode: vi.fn(() => true) }))
     const { result } = renderHook(() => useCulturalEvents())
     await waitFor(() => expect(result.current.data).toBeDefined())
     const months = result.current.data!.map(e => e.monthStart)

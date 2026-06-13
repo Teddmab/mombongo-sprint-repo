@@ -95,15 +95,16 @@ Export in `src/index.ts`.
 Add to `src/hooks/useFinancing.ts`:
 
 ```typescript
-import { doc, getDoc } from 'firebase/firestore'
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
+import { useAuth } from '@/hooks/useAuth'
 
 export function useFarmer(id: string) {
   return useQuery({
     queryKey: ['farmer', id],
     queryFn: async () => {
       if (isDevMode()) return (MOCK_FARMERS.find(f => f.id === id) ?? null) as Farmer | null
-      const snap = await getDoc(doc(db, 'farmers', id))
-      return snap.exists() ? ({ id: snap.id, ...snap.data() } as Farmer) : null
+      const result = await httpsCallable<{ id: string }, { farmer: Farmer | null }>(functions, 'getFarmer')({ id })
+      return result.data.farmer
     },
     enabled: !!id,
   })
@@ -114,20 +115,16 @@ export function useMyFinancingApplications() {
   return useQuery({
     queryKey: ['my-financing', user?.uid],
     queryFn: async () => {
-      if (!user?.uid) return []
-      if (isDevMode()) return []
-      const snap = await getDocs(
-        query(
-          collection(db, 'financing_applications'),
-          where('investorId', '==', user.uid),
-          orderBy('createdAt', 'desc')
-        )
-      )
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      if (!user?.uid || isDevMode()) return []
+      const result = await httpsCallable<Record<string, never>, { applications: Record<string, unknown>[] }>(functions, 'getMyFinancingApplications')({})
+      return result.data.applications
     },
     enabled: !!user?.uid,
   })
 }
+```
+
+> **`mombongo-functions` dependencies**: `getFarmer` onCall (`{ id }` → `{ farmer }`), `getMyFinancingApplications` onCall (reads `financing_applications` where `investorId == context.auth.uid` ordered by `createdAt` desc → `{ applications }`).
 ```
 
 Add `financingService` to `src/services/investmentService.ts`:

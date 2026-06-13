@@ -94,6 +94,24 @@ This convention is documented in `CLAUDE.md` at the project root.
 
 ---
 
+---
+
+### 4. No direct Firestore from frontend — architectural enforcement
+
+**Rule established**: `mombongo-web` must never call Firestore SDK functions (`getDocs`, `getDoc`, `setDoc`, `updateDoc`, `onSnapshot`, etc.) directly. All data reads and writes go through Firebase Cloud Functions (`httpsCallable`). Firebase Auth SDK calls are the only direct Firebase client calls allowed.
+
+**Why**: Security (Firestore rules enforce auth on the backend), auditability, and future flexibility to swap storage layers without changing the frontend.
+
+**What changed**:
+- `src/lib/firebase.ts` — removed `db` and `storage` exports (compile-time enforcement)
+- `src/hooks/useProducts.ts` — replaced `getDocs(query(collection(db, ...)))` with `httpsCallable(functions, 'getProducts')({})`
+- `src/store/AuthContext.tsx` — replaced `getDoc(doc(db, 'users', uid))` with `httpsCallable(functions, 'getUserProfile')({})`
+- `src/services/auth.service.ts` — replaced `setDoc(doc(db, 'users', uid), {...})` (in signUp + Google signIn) with `httpsCallable(functions, 'createUserProfile')({...})`
+- `CLAUDE.md` — added "Architecture rule — No direct Firestore from frontend" section
+- 10 future sprint docs updated — replaced all Firestore SDK patterns in `mombongo-web` sections with `httpsCallable` equivalents
+
+---
+
 ## Files changed
 
 | File | Repo | Change |
@@ -101,16 +119,31 @@ This convention is documented in `CLAUDE.md` at the project root.
 | `src/test/setup.ts` | mombongo-web | + localStorage mock + react-i18next mock |
 | `src/pages/MarketScreen.tsx` | mombongo-web | useProducts hook replacing direct mock import |
 | `src/pages/__tests__/MarketScreen.test.tsx` | mombongo-web | New — 3 unit tests |
+| `src/lib/firebase.ts` | mombongo-web | Removed `db`, `storage` exports |
+| `src/hooks/useProducts.ts` | mombongo-web | Direct Firestore → `httpsCallable(functions, 'getProducts')` |
+| `src/store/AuthContext.tsx` | mombongo-web | Direct Firestore getDoc → `httpsCallable(functions, 'getUserProfile')` |
+| `src/services/auth.service.ts` | mombongo-web | Direct Firestore setDoc → `httpsCallable(functions, 'createUserProfile')` |
+| `CLAUDE.md` | mombongo-web | + no-direct-Firebase architecture rule + updated data hook pattern |
 | `sprints/sprint-2-marketplace/S2-01-product-list.md` | sprint-repo | Updated current state |
+| `sprints/sprint-2-marketplace/S2-03-product-detail.md` | sprint-repo | useProduct hook → httpsCallable |
+| `sprints/sprint-2-marketplace/S2-05-portfolio.md` | sprint-repo | useInvestments hook → httpsCallable |
+| `sprints/sprint-3-bourse/S3-01-bourse-screen.md` | sprint-repo | useBourseOpportunities + useBoursePrices → httpsCallable + polling |
+| `sprints/sprint-3-bourse/S3-02-bourse-detail.md` | sprint-repo | useBourseOpportunity + usePriceHistory → httpsCallable |
+| `sprints/sprint-4-financing/S4-01-financing-screen.md` | sprint-repo | useFarmers → httpsCallable |
+| `sprints/sprint-4-financing/S4-02-farmer-detail.md` | sprint-repo | useFarmer + useMyFinancingApplications → httpsCallable |
 | `sprints/sprint-4-financing/S4-03-agent-report.md` | sprint-repo | UI-done status + scoped remaining work |
-| `sprints/sprint-6-payments-and-notifications/S6-01-payments.md` | sprint-repo | UI-done status + fully rewritten for PawaPay + Stripe |
+| `sprints/sprint-4-financing/S4-04-cultural-calendar.md` | sprint-repo | useCulturalEvents → httpsCallable |
+| `sprints/sprint-5-academia/S5-01-academia-screen.md` | sprint-repo | useCourses → httpsCallable |
+| `sprints/sprint-5-academia/S5-02-course-detail.md` | sprint-repo | useCourse + useCourseModules + useMyEnrollment → httpsCallable |
+| `sprints/sprint-6-payments-and-notifications/S6-01-payments.md` | sprint-repo | UI-done + PawaPay + Stripe; onSnapshot polling → httpsCallable polling |
+| `sprints/sprint-6-payments-and-notifications/S6-02-fcm-notifications.md` | sprint-repo | FCM token updateDoc → registerFcmToken httpsCallable |
 | `sprints/sprint-7-pwa-and-production/S7-04-production-deploy.md` | sprint-repo | CinetPay secrets → PawaPay + Stripe secrets |
 | `sprints/sprint-7-pwa-and-production/S7-05-production-deploy.md` | sprint-repo | CinetPay post-launch check → PawaPay + Stripe |
 | `sprints/sprint-0-infrastructure - DONE/S0-01-repo-setup.md` | sprint-repo | `VITE_CINETPAY_MODE` → `VITE_STRIPE_PUBLISHABLE_KEY` + `VITE_PAWAPAY_ENV` |
 | 7 sprint files renamed | sprint-repo | Filename → content alignment |
-| `CLAUDE.md` | mombongo-web | Created with DONE convention + sprint workflow |
 
 ## Result
-- 49/49 tests passing
+- 53/53 tests passing
 - 0 TypeScript errors
-- `/market` investor view loads from `useProducts` (Firestore in prod, mock in dev)
+- `/market` investor view loads from `useProducts` via Cloud Function (`httpsCallable`)
+- No direct Firestore SDK calls from any `mombongo-web` frontend code
