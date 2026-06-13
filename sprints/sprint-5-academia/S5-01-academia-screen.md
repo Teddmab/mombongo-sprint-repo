@@ -27,9 +27,11 @@ Create `src/hooks/useAcademia.ts`:
 
 ```typescript
 import { useQuery } from '@tanstack/react-query'
-import { collection, query, where, orderBy, getDocs } from 'firebase/firestore'
-import { db, isDevMode } from '@/lib/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { functions, isDevMode } from '@/lib/firebase'
 import { courses as MOCK_COURSES } from '@/data/mock'
+
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
 
 export interface Course {
   id: string
@@ -51,17 +53,13 @@ export function useCourses(category?: string) {
   return useQuery({
     queryKey: ['courses', category],
     queryFn: async () => {
-      if (isDevMode()) return MOCK_COURSES as unknown as Course[]
-      const snap = await getDocs(
-        query(
-          collection(db, 'courses'),
-          where('status', '==', 'published'),
-          orderBy('createdAt', 'desc')
-        )
-      )
-      let courses = snap.docs.map(d => ({ id: d.id, ...d.data() } as Course))
-      if (category) courses = courses.filter(c => c.category === category)
-      return courses
+      if (isDevMode()) {
+        let courses = MOCK_COURSES as unknown as Course[]
+        if (category) courses = courses.filter(c => c.category === category)
+        return courses
+      }
+      const result = await httpsCallable<{ category?: string }, { courses: Course[] }>(functions, 'getCourses')({ category })
+      return result.data.courses
     },
     staleTime: 120_000,
   })
@@ -71,6 +69,9 @@ export function useFeaturedCourses() {
   const { data, ...rest } = useCourses()
   return { data: data?.filter(c => c.isFeatured) ?? [], ...rest }
 }
+```
+
+> **`mombongo-functions` dependency**: `getCourses` onCall — accepts optional `{ category? }`, queries published courses ordered by `createdAt` desc, filters by category server-side, returns `{ courses: [...] }`.
 ```
 
 Add mock data to `src/data/mock.ts`:

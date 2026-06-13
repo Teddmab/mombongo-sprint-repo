@@ -77,7 +77,7 @@ Export in `src/index.ts`.
 Add to `src/hooks/useAcademia.ts`:
 
 ```typescript
-import { doc, getDoc, collection, getDocs, orderBy, query, where } from 'firebase/firestore'
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
 import { useAuth } from '@/hooks/useAuth'
 
 export interface Module {
@@ -108,8 +108,8 @@ export function useCourse(id: string) {
     queryKey: ['course', id],
     queryFn: async () => {
       if (isDevMode()) return (MOCK_COURSES.find(c => c.id === id) ?? null) as Course | null
-      const snap = await getDoc(doc(db, 'courses', id))
-      return snap.exists() ? ({ id: snap.id, ...snap.data() } as Course) : null
+      const result = await httpsCallable<{ id: string }, { course: Course | null }>(functions, 'getCourse')({ id })
+      return result.data.course
     },
     enabled: !!id,
   })
@@ -120,10 +120,8 @@ export function useCourseModules(courseId: string) {
     queryKey: ['modules', courseId],
     queryFn: async () => {
       if (isDevMode()) return MOCK_MODULES.filter(m => m.courseId === courseId) as Module[]
-      const snap = await getDocs(
-        query(collection(db, 'courses', courseId, 'modules'), orderBy('order', 'asc'))
-      )
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as Module))
+      const result = await httpsCallable<{ courseId: string }, { modules: Module[] }>(functions, 'getCourseModules')({ courseId })
+      return result.data.modules
     },
     enabled: !!courseId,
   })
@@ -135,18 +133,15 @@ export function useMyEnrollment(courseId: string) {
     queryKey: ['enrollment', user?.uid, courseId],
     queryFn: async () => {
       if (!user?.uid || isDevMode()) return null
-      const snap = await getDocs(
-        query(
-          collection(db, 'enrollments'),
-          where('userId', '==', user.uid),
-          where('courseId', '==', courseId)
-        )
-      )
-      return snap.empty ? null : ({ id: snap.docs[0].id, ...snap.docs[0].data() } as Enrollment)
+      const result = await httpsCallable<{ courseId: string }, { enrollment: Enrollment | null }>(functions, 'getMyEnrollment')({ courseId })
+      return result.data.enrollment
     },
     enabled: !!user?.uid && !!courseId,
   })
 }
+```
+
+> **`mombongo-functions` dependencies**: `getCourse` onCall (`{ id }` → `{ course }`), `getCourseModules` onCall (`{ courseId }` → modules subcollection ordered by `order` asc → `{ modules }`), `getMyEnrollment` onCall (`{ courseId }` → finds enrollment where `userId == context.auth.uid && courseId == courseId` → `{ enrollment }`).
 ```
 
 Add `academiService` to service layer:

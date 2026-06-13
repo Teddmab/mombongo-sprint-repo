@@ -26,15 +26,15 @@
 Add to `src/hooks/useBourse.ts`:
 
 ```typescript
-import { doc, getDoc, query, collection, where, orderBy, limit, getDocs } from 'firebase/firestore'
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
 
 export function useBourseOpportunity(id: string) {
   return useQuery({
     queryKey: ['bourse-opportunity', id],
     queryFn: async () => {
       if (isDevMode()) return MOCK_OPPS.find(o => o.id === id) ?? null
-      const snap = await getDoc(doc(db, 'bourse_opportunities', id))
-      return snap.exists() ? ({ id: snap.id, ...snap.data() } as BourseOpportunity) : null
+      const result = await httpsCallable<{ id: string }, { opportunity: BourseOpportunity | null }>(functions, 'getBourseOpportunity')({ id })
+      return result.data.opportunity
     },
     enabled: !!id,
   })
@@ -42,24 +42,19 @@ export function useBourseOpportunity(id: string) {
 
 export function usePriceHistory(commodity: string) {
   return useQuery({
-    queryKey: ['bourse-prices', commodity],
+    queryKey: ['bourse-price-history', commodity],
     queryFn: async () => {
       if (isDevMode()) return []
-      const snap = await getDocs(
-        query(
-          collection(db, 'bourse_prices'),
-          where('productName', '==', commodity),
-          orderBy('recordedAt', 'desc'),
-          limit(30)
-        )
-      )
-      return snap.docs.map(d => d.data() as BoursePrice).reverse()
+      const result = await httpsCallable<{ commodity: string }, { prices: BoursePrice[] }>(functions, 'getBoursePriceHistory')({ commodity })
+      return result.data.prices.reverse()  // chronological order for chart
     },
     enabled: !!commodity,
     staleTime: 300_000,
   })
 }
 ```
+
+> **`mombongo-functions` dependencies**: `getBourseOpportunity` onCall (`{ id }` → `{ opportunity }`), `getBoursePriceHistory` onCall (`{ commodity }` → last 30 price docs ordered by `recordedAt` desc).
 
 ### Step 2 — Screen layout
 

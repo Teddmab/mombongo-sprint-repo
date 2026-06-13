@@ -126,21 +126,29 @@ import { getMessaging, getToken, onMessage } from 'firebase/messaging'
 
 export const messaging = getMessaging(app)
 export const FCM_VAPID_KEY = import.meta.env.VITE_FCM_VAPID_KEY
+```
 
-export async function requestNotificationPermission(userId: string): Promise<string | null> {
+Create `src/services/notificationService.ts`:
+
+```typescript
+import { getToken } from 'firebase/messaging'
+import { httpsCallable } from 'firebase/functions'
+import { messaging, functions } from '@/lib/firebase'
+
+// db is NOT exported from firebase.ts — FCM token saved via Cloud Function
+export async function requestNotificationPermission(): Promise<string | null> {
   if (!('Notification' in window)) return null
   const permission = await Notification.requestPermission()
   if (permission !== 'granted') return null
 
-  const token = await getToken(messaging, { vapidKey: FCM_VAPID_KEY })
-
-  // Save FCM token to Firestore user doc
-  const { doc, updateDoc } = await import('firebase/firestore')
-  await updateDoc(doc(db, 'users', userId), { fcmToken: token })
-
+  const token = await getToken(messaging, { vapidKey: import.meta.env.VITE_FCM_VAPID_KEY })
+  // Register token server-side so the Function can look it up per-user
+  await httpsCallable(functions, 'registerFcmToken')({ token })
   return token
 }
 ```
+
+> **`mombongo-functions` dependency**: `registerFcmToken` onCall — receives `{ token: string }`, updates `users/{context.auth.uid}` with `{ fcmToken: token }` (the `updateDoc` that was previously in the client now lives here).
 
 Add `VITE_FCM_VAPID_KEY=your_web_push_certificate_key` to `.env.local`.
 
@@ -179,7 +187,7 @@ export function NotificationBell() {
   async function handleClick() {
     if (!user?.uid) return
     if (!permitted) {
-      const token = await requestNotificationPermission(user.uid)
+      const token = await requestNotificationPermission()  // uid comes from context.auth server-side
       if (token) setPermitted(true)
     }
   }

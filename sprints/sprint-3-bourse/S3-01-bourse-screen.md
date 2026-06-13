@@ -27,10 +27,11 @@ Create `src/hooks/useBourse.ts`:
 
 ```typescript
 import { useQuery } from '@tanstack/react-query'
-import { collection, query, where, orderBy, limit, getDocs, onSnapshot } from 'firebase/firestore'
-import { useEffect, useState } from 'react'
-import { db, isDevMode } from '@/lib/firebase'
+import { httpsCallable } from 'firebase/functions'
+import { functions, isDevMode } from '@/lib/firebase'
 import { bourseOpportunities as MOCK_OPPS, bourseTicker as MOCK_PRICES } from '@/data/mock'
+
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
 
 export interface BourseOpportunity {
   id: string
@@ -60,34 +61,32 @@ export function useBourseOpportunities() {
     queryKey: ['bourse-opportunities'],
     queryFn: async () => {
       if (isDevMode()) return MOCK_OPPS as unknown as BourseOpportunity[]
-      const snap = await getDocs(
-        query(collection(db, 'bourse_opportunities'), where('status', '==', 'open'), orderBy('departureDate', 'asc'))
-      )
-      return snap.docs.map(d => ({ id: d.id, ...d.data() } as BourseOpportunity))
+      const result = await httpsCallable<Record<string, never>, { opportunities: BourseOpportunity[] }>(functions, 'getBourseOpportunities')({})
+      return result.data.opportunities
     },
     staleTime: 60_000,
   })
 }
 
-// Real-time prices via onSnapshot
-export function useBoursePrices(): BoursePrice[] {
-  const [prices, setPrices] = useState<BoursePrice[]>([])
-  useEffect(() => {
-    if (isDevMode()) { setPrices(MOCK_PRICES as unknown as BoursePrice[]); return }
-    const q = query(collection(db, 'bourse_prices'), orderBy('recordedAt', 'desc'), limit(20))
-    return onSnapshot(q, snap => {
+// Prices polled via React Query refetch (no onSnapshot — all access through Functions)
+export function useBoursePrices() {
+  return useQuery({
+    queryKey: ['bourse-prices'],
+    queryFn: async () => {
+      if (isDevMode()) return MOCK_PRICES as unknown as BoursePrice[]
+      const result = await httpsCallable<Record<string, never>, { prices: BoursePrice[] }>(functions, 'getBoursePrices')({})
       // Keep only latest price per productName
       const latest = new Map<string, BoursePrice>()
-      snap.docs.forEach(d => {
-        const p = { id: d.id, ...d.data() } as BoursePrice
-        if (!latest.has(p.productName)) latest.set(p.productName, p)
-      })
-      setPrices([...latest.values()])
-    })
-  }, [])
-  return prices
+      result.data.prices.forEach(p => { if (!latest.has(p.productName)) latest.set(p.productName, p) })
+      return [...latest.values()]
+    },
+    staleTime: 30_000,
+    refetchInterval: 30_000,  // poll every 30 s instead of onSnapshot
+  })
 }
 ```
+
+> **`mombongo-functions` dependencies**: `getBourseOpportunities` onCall (open opportunities ordered by departure), `getBoursePrices` onCall (latest 20 price docs).
 
 ### Step 2 — Wire BourseScreen
 
