@@ -113,45 +113,69 @@ Export in `src/index.ts`.
 
 In `AgentReportScreen.tsx`, the Agent form farmer selector currently reads from `agentFarmers` in mock.
 
-Replace with a `useAgentFarmers()` hook (create in `src/hooks/useFinancement.ts`):
+Replace with a `useAgentFarmers()` hook (create in `src/hooks/useFinancing.ts`):
 
 ```typescript
+// No Firestore SDK — all reads through Cloud Functions (db not exported from firebase.ts)
 export function useAgentFarmers(agentId: string) {
   return useQuery({
     queryKey: ['agent-farmers', agentId],
     queryFn: async () => {
       if (isDevMode()) return agentFarmers  // keep mock fallback
-      const snap = await getDocs(
-        query(collection(db, 'farmers'), where('agentId', '==', agentId), orderBy('status'))
-      )
-      return snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      const result = await httpsCallable<{ agentId: string }, { farmers: AgentFarmerCard[] }>(
+        functions, 'getAgentFarmers'
+      )({ agentId })
+      return result.data.farmers
     },
     enabled: !!agentId,
   })
 }
 ```
 
+> **`mombongo-functions` dependency**: add `getAgentFarmers` onCall — queries `farmers` where `agentId == uid` ordered by `status`.
+
 ### Step 2 — Wire submit to Cloud Function
 
-Replace the fake submit handler in the Agent report form:
+⚠️ **Architecture rule**: `db` and `storage` are NOT exported from `src/lib/firebase.ts` in `mombongo-web`. The frontend must never call `storageRef`, `uploadBytes`, or `getDownloadURL` directly.
 
+**Photo upload pattern** — use a signed URL from a Cloud Function:
+
+1. Add `getAgentReportUploadUrl` onCall to functions:
 ```typescript
+export const getAgentReportUploadUrl = functions.region('europe-west1').https.onCall(async (data, context) => {
+  const uid = context.auth?.uid
+  if (!uid) throw new functions.https.HttpsError('unauthenticated', 'Login required')
+  const { filename, contentType } = data as { filename: string; contentType: string }
+  const path = `agent_reports/${uid}/${Date.now()}-${filename}`
+  const [url] = await admin.storage().bucket().file(path).getSignedUrl({
+    action: 'write',
+    expires: Date.now() + 5 * 60 * 1000,
+    contentType,
+  })
+  return { uploadUrl: url, path }
+})
+```
+
+2. Frontend upload flow (no Storage SDK import needed):
+```typescript
+async function uploadPhoto(file: File): Promise<string> {
+  const { data } = await httpsCallable<object, { uploadUrl: string; path: string }>(
+    functions, 'getAgentReportUploadUrl'
+  )({ filename: file.name, contentType: file.type })
+  await fetch(data.uploadUrl, { method: 'PUT', body: file, headers: { 'Content-Type': file.type } })
+  return data.path  // store the path; admin/functions resolves to URL
+}
+
 async function handleSubmit() {
   setSubmitting(true)
   try {
-    // 1. Upload photos if any
-    const photoUrls = await Promise.all(
-      photos.map(async file => {
-        const ref = storageRef(storage, `agent_reports/${user!.uid}/${Date.now()}-${file.name}`)
-        await uploadBytes(ref, file)
-        return getDownloadURL(ref)
-      })
-    )
+    // 1. Upload photos via signed URL (no direct Storage SDK)
+    const photoPaths = await Promise.all(photos.map(uploadPhoto))
     // 2. Submit report
     await httpsCallable(functions, 'submitAgentReport')({
       farmerId, visitDate, cropCondition, growthStage, surfaceHa,
       problems, disbursedUsd, additionalNeedUsd, recommendations,
-      nextVisitDate, photoUrls,
+      nextVisitDate, photoPaths,
     })
     toast.success(t('agent.success'))
     navigate(-1)
