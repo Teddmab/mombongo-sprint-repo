@@ -16,24 +16,42 @@
 | Mobile Money (Airtel, Orange, M-Pesa) | **PawaPay** | Primary payment method for DRC users |
 | Visa / Mastercard | **Stripe** | International investors and diaspora |
 
-## Status: Wallet UI complete via SP-02 — real payment backends remain
+## Status update (2026-07-16)
 
-`src/components/wallet/WalletModals.tsx` was built in **SP-02** with two purpose-built modals:
+**PawaPay (mobile money) is fully done via SP-04:**
 
-**DepositModal** — operator picker + phone number field → maps directly to PawaPay deposit initiation.
-**WithdrawModal** — operator picker + phone number → maps directly to PawaPay payout.
+| Item | Status |
+|------|--------|
+| `initiateDeposit` CF | ✅ Deployed |
+| `getDepositStatus` CF | ✅ Deployed |
+| `pawapayWebhook` HTTP | ✅ Deployed |
+| `initiateWithdraw` CF | ✅ Deployed |
+| `getWithdrawStatus` CF | ✅ Deployed |
+| `pawapayPayoutWebhook` HTTP | ✅ Deployed |
+| `pawapayRefundWebhook` HTTP | ✅ Deployed |
+| `DepositModal` wired to `initiateDeposit` + polling | ✅ Done (web) |
+| `WithdrawModal` wired to `initiateWithdraw` + polling | ✅ Done (web) |
+| `processWalletPayment` CF (wallet-based purchases) | ✅ Deployed |
 
-The Stripe card form (Visa/Mastercard tab) still needs to be added to `DepositModal`.
+**What remains — Stripe card payments only:**
+- `createStripePaymentIntent` CF + `stripeWebhook` CF
+- Stripe Visa/Mastercard tab in `DepositModal`
 
-**What's still mock:** both modals use `setTimeout` fake-submit. No API is called, no Firestore doc written.
+**Manual setup still needed:**
+- Set real `PAWAPAY_API_KEY` secret (sandbox key → `firebase functions:secrets:set PAWAPAY_API_KEY`)
+- Set `PAWAPAY_WEBHOOK_SECRET` secret
+- Register webhook URLs in PawaPay dashboard:
+  - Deposit: `https://europe-west1-mombongo-dev.cloudfunctions.net/pawapayWebhook`
+  - Payout: `https://europe-west1-mombongo-dev.cloudfunctions.net/pawapayPayoutWebhook`
+- Add `mombongo-web.pages.dev` to Firebase authorized domains
 
 ---
 
 ## Repo Scope
 | Repo | Status | Work |
 |------|--------|------|
-| `mombongo-functions` | 🔨 Active | `initiateDeposit` · `pawapayWebhook` · `createStripePaymentIntent` · `stripeWebhook` · `initiateWithdraw` |
-| `mombongo-web` | 🔨 Active | Replace mock submit in `DepositModal` / `WithdrawModal`; add Stripe card tab |
+| `mombongo-functions` | ⚠️ Partial | Stripe only: `createStripePaymentIntent` + `stripeWebhook` |
+| `mombongo-web` | ⚠️ Partial | Stripe card tab only — PawaPay modals done |
 | `mombongo-admin` | ✅ Done | — |
 
 ---

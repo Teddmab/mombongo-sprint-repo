@@ -10,12 +10,31 @@
 | Estimate | 2h |
 | Dependencies | S7-03 (all tests passing) |
 
+## Status update (2026-07-16)
+
+**CI/CD pipeline is already in place via SP-07 (GitHub Actions):**
+
+| Item | Status |
+|------|--------|
+| `.github/workflows/production.yml` — 9-job pipeline | ✅ Done |
+| Approval gate (manual reviewers) | ✅ Done |
+| Firebase deploy (Firestore rules + indexes) | ✅ Done |
+| Cloudflare Pages deploy via `cloudflare/pages-action@v1` | ✅ Done |
+| Smoke tests + health check jobs | ✅ Done |
+| GitHub Release job | ✅ Done |
+| Firebase web config hardcoded (not secrets) | ✅ Done |
+
+**What still remains in S7-04:**
+- Validate all Firestore compound indexes are present in `firestore.indexes.json`
+- Production env vars review (ensure no secrets in code)
+- Admin deploy pipeline
+
 ## Repo Scope
 | Repo | Status | Work |
 |------|--------|------|
-| `mombongo-web` | 🔨 Active | Firebase Hosting config, GitHub Actions CD, env validation |
+| `mombongo-web` | ⚠️ Partial | CI/CD done; Firestore indexes review remaining |
 | `mombongo-admin` | 🔨 Active | Firebase Hosting deploy (separate site) |
-| `mombongo-functions` | 🔨 Active | Finalize Firestore rules + indexes, production env vars |
+| `mombongo-functions` | ⚠️ Partial | Finalize Firestore rules + indexes |
 
 ---
 

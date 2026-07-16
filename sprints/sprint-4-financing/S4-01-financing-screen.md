@@ -21,6 +21,12 @@
 
 ## mombongo-web
 
+### ⚠️ Type alignment note
+
+`src/data/mock.ts` already defines `Farmer` with fields: `{ id, name, location, surface, crops, experience, trustScore, needed, raised, story, avatar, image }`. The `FinancementScreen.tsx` currently uses this type via `import { farmers } from '@/data/mock'`.
+
+The interface below introduces new Firestore-aligned fields. When implementing, **use the `Farmer` type from the hook** (not from mock) in the screen components — the mock `farmers` array is used only as the dev fallback.
+
 ### Step 1 — useFarmers hook
 
 Create `src/hooks/useFinancing.ts`:
