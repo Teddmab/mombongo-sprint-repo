@@ -183,12 +183,18 @@ Route: add `/financing` and `/farmers` to admin router.
 
 ---
 
+## Status update (2026-07-17)
+
+CFs and seed scripts done in PR #3 (mombongo-functions), admin screens done in PR #5 (mombongo-admin).
+Firestore rules still need to be deployed (add rules from Step 2 above to `firestore.rules`).
+
 ## ✅ Definition of Done
-- [ ] Seed script populates `farmers`, `cultural_events` in Firestore
-- [ ] Admin `/farmers` lists farmers with approve + assign agent actions
-- [ ] Admin `/financing` lists applications, disburse tranche works
-- [ ] Firestore rules deployed
-- [ ] `npm run build` exits 0 (admin)
+- [x] Seed script populates `farmers`, `cultural_events` in Firestore ← `seedFinancing.ts` done
+- [x] `getFarmers` / `getFarmer` / `getCulturalEvents` CFs deployed
+- [x] Admin `/farmers` lists farmers with approve + assign agent actions ← PR #5
+- [x] Admin `/financing` lists applications, disburse tranche works ← PR #5
+- [ ] Firestore rules deployed (pending — add rules from Step 2 to firestore.rules)
+- [x] `npm run build` exits 0 (admin) ← verified
 
 ```bash
 git commit -m "feat(s4-00): financing data setup — seed script + admin CRUD"
