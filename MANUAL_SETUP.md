@@ -110,15 +110,19 @@ Add as **Repository secret**:
 After setting the Stripe secrets above, deploy the new S6 functions. Run from inside `mombongo-functions/`:
 
 ```bash
-firebase deploy --only \
-  functions:createStripePaymentIntent,\
-  functions:stripeWebhook,\
-  functions:onInvestmentCreated,\
-  functions:onBourseInvestmentCreated,\
-  functions:onDepositCompleted,\
-  functions:onFinancingStatusChanged,\
-  functions:onHarvestDue
+firebase deploy \
+  --only functions:createStripePaymentIntent \
+  --only functions:stripeWebhook \
+  --only functions:onInvestmentCreated \
+  --only functions:onBourseInvestmentCreated \
+  --only functions:onDepositCompleted \
+  --only functions:onFinancingStatusChanged \
+  --only functions:onHarvestDue \
+  --only functions:setUserRole \
+  --only functions:disableUser
 ```
+
+> Each function needs its own `--only functions:name` flag. Comma-separated names in a single `--only` do **not** work with the Gen1 Firebase CLI.
 
 Firebase Functions console: [console.firebase.google.com/project/mombongo-dev/functions](https://console.firebase.google.com/project/mombongo-dev/functions)
 
