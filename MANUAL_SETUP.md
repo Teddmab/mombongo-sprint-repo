@@ -81,6 +81,8 @@ Add as **Repository secrets**:
 | `CLOUDFLARE_API_TOKEN` | Cloudflare token (mombongo-web) | ✅ Already set |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare account ID | ✅ Already set |
 | `FIREBASE_TOKEN_PROD` | Firebase CI token | ✅ Already set |
+| `TEST_INVESTOR_EMAIL` | Email of a Firebase test account with investor role | ❌ Missing |
+| `TEST_INVESTOR_PASSWORD` | Password for the test account above | ❌ Missing |
 
 ---
 
@@ -105,7 +107,19 @@ Add as **Repository secret**:
 
 ---
 
-## 5. Deploy Firebase Functions (Sprint 6)
+## 5. Deploy Firestore Indexes (Sprint 7)
+
+After merging S7-04, deploy the updated compound indexes. Run from inside `mombongo-functions/`:
+
+```bash
+firebase deploy --only firestore:indexes
+```
+
+This adds indexes for: `bourse_investments`, `financing_applications`, `transactions` (by userId), `bourse_prices`, and `enrollments`.
+
+---
+
+## 6. Deploy Firebase Functions (Sprint 6)
 
 After setting the Stripe secrets above, deploy the new S6 functions. Run from inside `mombongo-functions/`:
 
@@ -176,6 +190,31 @@ Also ensure `PAWAPAY_API_KEY` is set as a Firebase Functions secret:
 ```bash
 firebase functions:secrets:set PAWAPAY_API_KEY
 ```
+
+---
+
+## 9. Sentry — Error Tracking (Sprint 7)
+
+### 9a. Create a Sentry project
+
+1. Go to [sentry.io](https://sentry.io) and create an account or log in
+2. Create a new **Project** → select **React** → name it `mombongo-web`
+3. Copy the **DSN** from the project settings (looks like `https://abc123@o123456.ingest.sentry.io/123456`)
+
+### 9b. Add GitHub secrets — mombongo-web
+
+Go to [github.com/Teddmab/mombongo-web/settings/secrets/actions](https://github.com/Teddmab/mombongo-web/settings/secrets/actions)
+
+| Secret name | Value | Status |
+|---|---|---|
+| `VITE_SENTRY_DSN` | DSN from step 9a | ❌ Missing |
+| `SENTRY_AUTH_TOKEN` | Auth token from Sentry → Settings → Auth Tokens | ❌ Missing |
+
+> `SENTRY_AUTH_TOKEN` is only used at build time to upload source maps. If it's not set, the build still succeeds — error tracking works, stack traces just won't be symbolicated.
+
+### 9c. Verify in production
+
+After your first production deploy, trigger a test error and check that it appears in the Sentry dashboard within a minute.
 
 ---
 
