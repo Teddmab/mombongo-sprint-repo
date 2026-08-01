@@ -175,3 +175,25 @@ Firestore → products → SenJ8Y6d8N61uUbq2kDR
   duration:   45 days
   status:     active
 ```
+
+---
+
+## Implementation Status (updated 2026-08-01)
+
+**✅ ALL PHASES COMPLETE**
+
+### ✅ Done (phases 1–6)
+- Phase 0: Firebase secrets set (placeholder key — real PawaPay API key still needed)
+- Phase 1: `initiateDeposit`, `pawapayWebhook`, `getDepositStatus` CFs deployed
+- Phase 1b: `initiateWithdraw`, `getWithdrawStatus`, `pawapayPayoutWebhook` CFs deployed
+- Phase 2: `DepositModal` wired to real `initiateDeposit` CF with 3s polling
+- Phase 2b: `WithdrawModal` wired to real `initiateWithdraw` CF with polling
+- Phase 3: `createInvestment` atomic Firestore transaction deployed
+- Phase 4: `InvestModal` + `ProductDetailScreen` "Investir" button wired
+- Phase 5: `AdminProducts.tsx`, `createProduct`, `updateProductStatus`, `getProductsAdmin` done
+- Phase 5b: Seed product deployed (ID: `SenJ8Y6d8N61uUbq2kDR`)
+- Phase 6: `getDashboardKpis` CF created in `mombongo-functions/src/admin/getDashboardKpis.ts`, exported from `index.ts`; `useAdminKpis` rewired to `httpsCallable` via `useQuery` (60s refetch); `AdminDashboard` STAT_CARDS updated with `platformRevenueUsd` KPI tile (TrendingUp icon)
+
+### ⚠️ Pending (not code — manual ops)
+- **PawaPay key**: Real `PAWAPAY_API_KEY` secret not yet set in Firebase — deposits fail in production
+- `getDashboardKpis` CF needs to be deployed: `firebase deploy --only functions:getDashboardKpis --project mombongo-dev`
