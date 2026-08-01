@@ -178,3 +178,24 @@ Render `alerts` from `useFarmerHome()`, same UI but real data.
 - [ ] Alerts list shows real unread notifications
 - [ ] Loading skeleton shown while data fetches
 - [ ] Dev mode: MOCK data for cultures, agent, financing, alerts
+
+---
+
+## Implementation Status (updated 2026-07-23)
+
+**PARTIAL — exploitation/cultures wired; alerts, tasks, financing still mock**
+
+### ✅ Done (this session)
+- `useMyExploitations()` hook wired — `AgricultorHome` renders real exploitation cards
+- `useMyCultures(exploitationId)` per-card — each `ExploitationSummaryCard` fetches its own cultures independently
+- `CultureCycleMini` shows stage badge, progress bar, harvest countdown from real data
+- `ExploitationDashboard` fully rebuilt with real culture data (seeds, inputs, cost breakdown)
+- `AgricultorHome` no longer shows hardcoded "Pastèques 5ha" — data comes from Firestore
+
+### ❌ Remaining
+- `farmerAlerts` still imported from `mock.ts` in `AgricultorHome.tsx` (line 9) and `AgricultorFinancement.tsx`
+- `cropTasks` still imported from `mock.ts` in `AgricultorFinancement.tsx` (line 2)
+- Financing progress bar on home: `disbursed`/`target` hardcoded — `getMyFinancingApplications` CF not built
+- Assigned agent card: still hardcoded "Patrick Kadima" string — `agentId` lookup not wired
+- `getFarmerHomeData` aggregation CF not built
+- `useFarmerHome()` hook not created

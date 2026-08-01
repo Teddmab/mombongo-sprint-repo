@@ -93,3 +93,24 @@ align with what the mock data provides so the component renders correctly in dev
 - [ ] `MerchantFinancement` renders farmer image, requested amount, and progress bar correctly in dev mode
 - [ ] `npx tsc --noEmit` passes
 - [ ] `npx vitest run` passes
+
+---
+
+## Implementation Status (updated 2026-07-23)
+
+**NOT DONE — 3 confirmed runtime crashes**
+
+### Bug 1 — BourseDetailScreen: PaymentModal not imported ❌ CONFIRMED
+- `<PaymentModal>` is rendered in the JSX but there is no import for it at the top of the file
+- `BourseInvestModal` is imported instead — `PaymentModal` is from `@/components/wallet/WalletModals`
+- **Fix needed**: Add `import { PaymentModal } from "@/components/wallet/WalletModals"` to `BourseDetailScreen.tsx`
+
+### Bug 2 — AgricultorBourse: setVenteOpen closure bug ❌ CONFIRMED  
+- Line 39: `PriceRow` (module-scope component) calls `setVenteOpen(true)` 
+- `setVenteOpen` is declared inside `DesktopAgricultorBourse` (line 52) — different scope
+- **Fix needed**: Pass `onSell: () => void` prop to `PriceRow`, replace `setVenteOpen()` with `onSell()`
+
+### Bug 3 — MerchantFinancement: wrong field names ❌ CONFIRMED
+- Line 86–87: `farmer.photo` → should be `farmer.image`
+- Line 106: `farmer.requestedAmount` → should be `farmer.needed`
+- Lines 110–111, 162–163, 167: `farmer.funded` → should be `farmer.raised`

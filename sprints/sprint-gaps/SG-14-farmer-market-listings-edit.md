@@ -147,3 +147,22 @@ Replace mock ticker with `useProductListings()` data: compute ticker from active
 - [ ] Deactivated listing disappears from the list immediately
 - [ ] bourseTicker strip computed from active `product_listings` (not mock)
 - [ ] Dev mode: mock listings used, no CF calls
+
+---
+
+## Implementation Status (updated 2026-07-23)
+
+**PARTIAL — real data wired; edit/deactivate CFs and modal not built**
+
+### ✅ Done (this session)
+- `AgricultorMarket.tsx` "Mes annonces" tab: replaced `myListings` mock import with `useMyListings()` hook
+- `usePricesByProvince()` used for "Prix marché" tab (real CF data)
+- Loading spinners and empty states added
+
+### ❌ Remaining
+- `updateProductListing` CF not built (not in `mombongo-functions/src/index.ts`)
+- `deactivateProductListing` CF not built
+- `useUpdateListing()` and `useDeactivateListing()` hooks not added to `useProductListings.ts`
+- `ModifierAnnonceModal` component not built — "Modifier" button still shows toast stub
+- "Désactiver" button not implemented
+- bourseTicker strip still computed from mock data (not from real `product_listings`)
