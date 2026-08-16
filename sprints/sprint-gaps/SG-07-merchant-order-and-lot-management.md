@@ -3,63 +3,59 @@
 ## Why this matters
 All four merchant action modals (CommanderModal, ReserverLotModal, PublierLotModal, PreAcheterModal) fire a fake setTimeout and show toast.success. Nothing goes to Firestore. Merchants have no way to track their orders, reservations, or pre-purchases.
 
-## Current state
-- `CommanderModal` — fake 800ms delay, no CF called, no doc created
-- `ReserverLotModal` — same
-- `PublierLotModal` — same  
-- `PreAcheterModal` — same
-- No "mes commandes" or "mes réservations" screen for merchants
-- Merchant action buttons have no history, no status tracking
+## Already implemented (skip these)
+- `createProductOrder` CF — ✅ exists in `mombongo-functions/src/merchant/createProductOrder.ts`
+- `getMerchantOrders` CF — ✅ exists in `mombongo-functions/src/merchant/getMerchantOrders.ts`
+- Both exported from `src/index.ts`
 
-## Work items
+## Remaining work items
 
-### 1. Wire `CommanderModal` (order agricultural products)
-- CF: `createProductOrder(uid, { productId, qty, deliveryAddress, deliveryDate, paymentMethod, notes })`
-  - Writes to `product_orders/{id}` collection
-  - Deducts wallet if payment method is wallet (via `processWalletPayment` CF)
-  - Notifies the farmer/seller via push (S6-02)
-- Return: `{ orderId, status: 'pending' }`
+### 1. Wire `CommanderModal` to `createProductOrder`
+- Replace `setTimeout` stub with `httpsCallable(functions, 'createProductOrder')({ listingId, quantityKg, deliveryAddress, deliveryDate, paymentMethod, notes })`
+- Show `orderId` in success screen
 
 ### 2. Wire `ReserverLotModal` (reserve bourse lot)
-- CF: `reserveBbourseLot(uid, { opportunityId, lotSize, amountUsd })`
-  - Writes to `bourse_investments/{id}` (same collection as investor bourse)
-  - Deducts wallet via `processWalletPayment`
+- CF needed: `reserveBourseLot(uid, { opportunityId, lotSizeKg, amountUsd })`
+  - Writes to `bourse_investments/{id}` with `investorId: uid, type: 'merchant'`
   - Updates `bourse_opportunities/{opportunityId}.reservedCount += 1`
+  - Notifies opportunity creator via push
 
 ### 3. Wire `PublierLotModal` (merchant publishes their own lot)
-- CF: `createBourseOpportunity(uid, { title, type, qty, pricePerUnit, currency, availableFrom, province, description })`
+- CF needed: `createBourseOpportunity(uid, { title, commodity, qty, pricePerUnit, currency, availableFrom, province, description })`
   - Writes to `bourse_opportunities/{id}` with `status: 'open'`, `createdBy: uid`
 
 ### 4. Wire `PreAcheterModal` (pre-purchase farmer crops)
-- CF: `createPrePurchase(uid, { farmerId, cropType, qty, pricePerUnitUsd, expectedHarvestDate, notes })`
+- CF needed: `createPrePurchase(uid, { farmerId, cropType, qty, pricePerUnitUsd, expectedHarvestDate, notes })`
   - Writes to `pre_purchases/{id}`
-  - Notifies farmer via push (S6-02)
+  - Notifies farmer via push
 
-### 5. Merchant orders & reservations screen (`/mes-transactions`)
-- New screen accessible from MerchantHome
+### 5. `getMerchantReservations` CF
+- Queries `bourse_investments` where `investorId == uid` (merchant reservations)
+- Returns with status and opportunity title
+
+### 6. Merchant orders & reservations screen (`MerchantTransactions`)
+- New screen accessible from MerchantHome quick actions
 - Two tabs: "Commandes" | "Réservations"
-- Commandes: list from `product_orders` where `buyerId == uid`
-  - Status: en attente / confirmée / livrée / annulée
-- Réservations: list from `bourse_investments` where `investorId == uid`
-  - Status: réservé / confirmé / livré
-- Tap row → simple detail modal
+- Commandes: calls `getMerchantOrders` — status chips (en attente / confirmée / livrée / annulée)
+- Réservations: calls `getMerchantReservations` — status chips
+- Tap row → simple detail bottom sheet
 
-### 6. Merchant's published lots
-- On MerchantBourse: add a "Mes lots publiés" section
-- Lists `bourse_opportunities` where `createdBy == uid`
-- Can withdraw/close a lot they published
+### 7. "Mes lots publiés" on MerchantBourse
+- Section listing `bourse_opportunities` where `createdBy == uid`
+- Status chip per lot (ouvert / complet / clôturé)
+- "Retirer" button → calls a `closeBourseLot` CF (soft-delete: status → 'closed')
 
-## Cloud Functions needed
-- `createProductOrder(data)` → `product_orders`
-- `reserveBbourseLot(data)` → `bourse_investments`
-- `createBourseOpportunity(data)` → `bourse_opportunities`
-- `createPrePurchase(data)` → `pre_purchases`
-- `getMerchantOrders(uid)` → product orders where buyerId == uid
-- `getMerchantReservations(uid)` → bourse investments where investorId == uid
+## Cloud Functions needed (remaining)
+- `reserveBourseLot`
+- `createBourseOpportunity`
+- `createPrePurchase`
+- `getMerchantReservations`
+- `closeBourseLot` (withdraw a published lot)
 
 ## Acceptance criteria
-- [ ] CommanderModal creates a real `product_orders` doc
-- [ ] ReserverLotModal creates a real `bourse_investments` doc + deducts wallet
+- [ ] CommanderModal creates a real `product_orders` doc via CF
+- [ ] ReserverLotModal creates a real `bourse_investments` doc
 - [ ] PublierLotModal creates a real `bourse_opportunities` doc visible to others
 - [ ] PreAcheterModal creates a real `pre_purchases` doc + notifies farmer
-- [ ] Merchant can view their orders and reservations in a dedicated screen
+- [ ] Merchant can view their orders and reservations in MerchantTransactions screen
+- [ ] "Mes lots publiés" shows on MerchantBourse with withdraw action
