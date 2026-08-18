@@ -1,4 +1,14 @@
-# Mombongo Mobile — Sprint Plan
+# Mombongo Mobile — Sprint Plan (superseded)
+
+> ⚠️ **Strategic shift — August 2026**
+> The multi-role single-app approach described in this folder is superseded by dedicated per-role apps.
+> Each target user group (farmer, agent) will receive its own branded app backed by EAS build profiles.
+> See **`sprint-farmer-app/`** and **`sprint-agent-app/`** for the active sprint plans.
+>
+> The SM-00 to SM-11 stories below remain valid as a historical record of what was confirmed working
+> on the shared mobile codebase. Future work targets the per-role build architecture.
+
+---
 
 React Native + Expo app (`mombongo-mobile`). Firebase Auth + Cloud Functions backend. EAS Build for Android (iOS TBD).
 

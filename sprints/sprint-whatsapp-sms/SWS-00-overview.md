@@ -43,6 +43,7 @@ This sprint adds two complementary notification channels:
 | [SWS-02](SWS-02-user-preferences.md) | User notification preferences (web + CF) | 3h |
 | [SWS-03](SWS-03-triggered-notifications.md) | Trigger notifications on platform events | 3h |
 | [SWS-04](SWS-04-admin-broadcast.md) | Admin broadcast panel (send to segment) | 2–4h |
+| [SWS-05](SWS-05-morning-price-whatsapp.md) | Morning price push via WhatsApp/SMS | 2h |
 
 ---
 
@@ -60,15 +61,16 @@ Key steps:
 
 ## Notification event matrix
 
-| Event | WhatsApp | SMS | FCM |
-|-------|----------|-----|-----|
-| Transaction confirmed (deposit/withdrawal) | ✅ | ✅ | ✅ |
-| Agro Exchange match found | ✅ | — | ✅ |
-| Contract signed by other party | ✅ | ✅ | ✅ |
-| Escrow funded (seller) | ✅ | ✅ | ✅ |
-| Delivery confirmed → funds released | ✅ | ✅ | ✅ |
-| Financing application status change | ✅ | ✅ | ✅ |
-| KYC approved/rejected | — | ✅ | ✅ |
-| OTP / verification code | — | ✅ | — |
-| Admin broadcast (marketing) | ✅ | ✅ | ✅ |
-| Harvest due reminder (farmer) | ✅ | ✅ | ✅ |
+| Event | WhatsApp | SMS | FCM | Story |
+|-------|----------|-----|-----|-------|
+| Transaction confirmed (deposit/withdrawal) | ✅ | ✅ | ✅ | SWS-03 |
+| Agro Exchange match found | ✅ | — | ✅ | SWS-03 |
+| Contract signed by other party | ✅ | ✅ | ✅ | SWS-03 |
+| Escrow funded (seller) | ✅ | ✅ | ✅ | SWS-03 |
+| Delivery confirmed → funds released | ✅ | ✅ | ✅ | SWS-03 |
+| Financing application status change | ✅ | ✅ | ✅ | SWS-03 |
+| KYC approved/rejected | — | ✅ | ✅ | SWS-03 |
+| OTP / verification code | — | ✅ | — | SWS-03 |
+| Admin broadcast (marketing) | ✅ | ✅ | ✅ | SWS-04 |
+| Harvest due reminder (farmer) | ✅ | ✅ | ✅ | SWS-03 |
+| **Morning price push (daily 06h30)** | ✅ | fallback | ✅ | **SWS-05** |
