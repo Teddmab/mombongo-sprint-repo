@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Mombongo Partner API
-  version: 1.1.0
+  version: 1.1.1
   description: |
     API surface for external partners integrating with Mombongo's payment
     and marketplace rails. AROM is the first (and currently only) partner.
@@ -67,6 +67,53 @@ info:
     letter, visible to us in our own admin console with a manual-retry
     button, so if you were down when we tried, tell us and we can resend it
     by hand rather than you needing to reconcile from a polling loop.
+
+    Both outbound webhooks land on the same `webhookUrl` — every payload
+    carries an `event` field (`"payment_complete"` or `"invoice_issued"`)
+    so your receiver can route without guessing from which other fields
+    happen to be present.
+
+    ## Worked example — signing a request
+
+    A full, verifiable example for `createExternalHarvestOffer`, so you
+    can check your own implementation produces the exact same signature
+    for the exact same input before pointing it at a real secret.
+
+    Given `hmacSecret = "test_hmac_secret_do_not_use_in_production"` and
+    this exact raw request body (note: no extra whitespace — sign the
+    bytes you actually send, not a pretty-printed version):
+
+    ```
+    {"listingId":"listing_abc123","offerQuantityKg":500,"offerPricePerKgCdf":450}
+    ```
+
+    ```bash
+    echo -n '{"listingId":"listing_abc123","offerQuantityKg":500,"offerPricePerKgCdf":450}' \
+      | openssl dgst -sha256 -hmac "test_hmac_secret_do_not_use_in_production"
+    ```
+
+    produces:
+
+    ```
+    02abf6e9259aec73dcb388cc9e3d35d10075a5f9ca47d6351efa9d1f810f6c60
+    ```
+
+    So the full request is:
+
+    ```bash
+    curl -X POST https://europe-west1-mombongo-dev.cloudfunctions.net/createExternalHarvestOffer \
+      -H "content-type: application/json" \
+      -H "x-partner-id: arom" \
+      -H "x-partner-signature: 02abf6e9259aec73dcb388cc9e3d35d10075a5f9ca47d6351efa9d1f810f6c60" \
+      -d '{"listingId":"listing_abc123","offerQuantityKg":500,"offerPricePerKgCdf":450}'
+    ```
+
+    If your computed signature doesn't match ours for this exact input,
+    the mismatch is almost always in how the body gets serialized before
+    signing — a JSON library that reorders keys, adds whitespace, or
+    changes number formatting will produce a different byte sequence and
+    therefore a different signature, even though the parsed JSON is
+    "the same." Sign the literal bytes you're about to send on the wire.
 
     ## Idempotency
 
@@ -478,14 +525,20 @@ webhooks:
         Fires once, on the transition to "paid" or "failed" — not on every
         write to the invoice. Unchanged since Sprint AI; fires the same way
         regardless of invoice origin.
+
+        This and invoiceIssued below land on the same webhookUrl — check
+        the `event` field first to route the payload.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [externalInvoiceId, status, amountUsd, paidAt]
+              required: [event, externalInvoiceId, status, amountUsd, paidAt]
               properties:
+                event:
+                  type: string
+                  enum: [payment_complete]
                 externalInvoiceId:
                   type: string
                   description: >-
@@ -514,14 +567,20 @@ webhooks:
         there is no createExternalInvoice call for these, since Mombongo
         (not you) originates them. Pay the invoice the normal way via
         createExternalInvoiceCheckout once you've decided to.
+
+        Lands on the same webhookUrl as paymentComplete above — check the
+        `event` field first to route the payload.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [invoiceId, farmerId, listingId, amountUsd, quantityKg, commodity]
+              required: [event, invoiceId, farmerId, listingId, amountUsd, quantityKg, commodity]
               properties:
+                event:
+                  type: string
+                  enum: [invoice_issued]
                 invoiceId:
                   type: string
                   description: >-
