@@ -1,0 +1,551 @@
+openapi: 3.1.0
+info:
+  title: Mombongo Partner API
+  version: 1.1.0
+  description: |
+    API surface for external partners integrating with Mombongo's payment
+    and marketplace rails. AROM is the first (and currently only) partner.
+
+    ## Two invoice origins
+
+    - **Partner-originated** (Sprint AI, live since 2026-08): your system
+      creates an invoice via `createExternalInvoice`, then a Mombongo user
+      pays it via `createExternalInvoiceCheckout`. This is what you already
+      integrated.
+    - **Harvest-sale, partner-sourced** (Sprint DP, new): a farmer publishes
+      a harvest listing on Mombongo; you discover it via
+      `getExternalPublishedListings` and submit an offer via
+      `createExternalHarvestOffer`. If the farmer picks your offer, Mombongo
+      creates the invoice itself and sends you the new `invoiceIssued`
+      webhook. You then pay it the exact same way — `createExternalInvoiceCheckout`
+      is unmodified and works identically regardless of which flow created
+      the invoice.
+
+    ## Environment
+
+    There is a single Firebase project (`mombongo-dev`) — no separate
+    staging/production project. Every `partners` and `external_invoices`
+    document carries a `testMode` boolean; a new invoice inherits your
+    partner account's `testMode` setting, so your sandbox and live traffic
+    are distinguished by that flag, not by a different base URL or set of
+    credentials.
+
+    ## Authenticating inbound requests (you → Mombongo)
+
+    Every endpoint below requires two headers:
+
+    - `x-partner-id` — your partner id (e.g. `arom`).
+    - `x-partner-signature` — lowercase hex HMAC-SHA256 of the **raw request
+      body bytes**, using the `hmacSecret` we gave you when provisioning
+      your account. Sign the bytes exactly as sent — not a re-serialized or
+      re-ordered version of the JSON, since that can produce a different
+      byte sequence than what we verify against.
+
+      ```
+      signature = hex(HMAC_SHA256(hmacSecret, rawRequestBodyBytes))
+      ```
+
+    A missing header, an inactive partner account, or a signature mismatch
+    all fail the same way: `401 Invalid signature`. There is no partial
+    credit or descriptive error here by design — we don't want to help an
+    attacker narrow down which part of a forged request is wrong.
+
+    ## Authenticating outbound webhooks (Mombongo → you)
+
+    Both webhooks below are signed the same way, but with a **different**
+    secret (`outboundHmacSecret`, not `hmacSecret`) and over the
+    **JSON-serialized payload** (not raw bytes, since we're the ones
+    constructing the request):
+
+    ```
+    x-mombongo-signature = hex(HMAC_SHA256(outboundHmacSecret, JSON.stringify(payload)))
+    ```
+
+    Verify this before trusting the payload. If your endpoint doesn't
+    return a 2xx response, we retry up to 3 times with exponential backoff
+    (2s, 4s), then give up — the event is logged on our side as a dead
+    letter, visible to us in our own admin console with a manual-retry
+    button, so if you were down when we tried, tell us and we can resend it
+    by hand rather than you needing to reconcile from a polling loop.
+
+    ## Idempotency
+
+    `createExternalInvoice` is idempotent on `externalInvoiceId` — calling
+    it twice with the same id returns `{ "status": "duplicate_ignored" }`
+    and the original invoice, rather than creating a second one. There is
+    no equivalent idempotency key on `createExternalHarvestOffer` — each
+    call creates a new offer, since a legitimate use case (offering twice
+    at different prices) looks identical to an accidental retry from our
+    side of that boundary.
+
+    ## Error responses
+
+    Most error responses are a plain-text body with a plain HTTP status
+    code, **not** a JSON envelope — this mirrors this codebase's existing
+    webhook conventions rather than introducing a new one just for this
+    API. A few success/conflict responses that carry data are JSON (called
+    out per-endpoint below). Don't assume every non-2xx body is parseable
+    JSON.
+
+servers:
+  - url: https://europe-west1-mombongo-dev.cloudfunctions.net
+    description: >-
+      Single environment. Each endpoint below is its own Cloud Function at
+      this base URL (e.g. .../createExternalInvoice) — there is no shared
+      /v1 or /api path prefix.
+
+security:
+  - PartnerId: []
+    PartnerSignature: []
+
+components:
+  securitySchemes:
+    PartnerId:
+      type: apiKey
+      in: header
+      name: x-partner-id
+      description: Your partner id, e.g. "arom".
+    PartnerSignature:
+      type: apiKey
+      in: header
+      name: x-partner-signature
+      description: >-
+        Lowercase hex HMAC-SHA256 of the raw request body bytes, signed
+        with your hmacSecret. See the top-level description for the exact
+        algorithm.
+
+  schemas:
+    Currency:
+      type: string
+      enum: [USD]
+      description: >-
+        Only USD is meaningful today — the amountUsd field name is not
+        decorative, but the currency field itself is not currently
+        validated server-side against it. Always send "USD".
+
+    PaymentMethod:
+      type: string
+      enum: [card, mobile_money, bank_transfer]
+      description: >-
+        bank_transfer is accepted as a value but not yet implemented —
+        calling createExternalInvoiceCheckout with method "bank_transfer"
+        returns 501. No provider has been chosen for it yet.
+
+    MobileMoneyOperator:
+      type: string
+      enum: [mpesa, airtel, orange]
+      description: DRC mobile money correspondents, routed through PawaPay.
+
+    InvoiceStatus:
+      type: string
+      enum: [pending, checkout_created, paid, failed]
+
+    CreateExternalInvoiceRequest:
+      type: object
+      required: [externalInvoiceId, amountUsd, currency]
+      properties:
+        externalInvoiceId:
+          type: string
+          description: Your own invoice id. Used as the idempotency key.
+        amountUsd:
+          type: number
+          exclusiveMinimum: 0
+        currency:
+          $ref: '#/components/schemas/Currency'
+        dueDate:
+          type: [string, 'null']
+          format: date-time
+        reference:
+          type: [string, 'null']
+          description: Free-text reference shown in Mombongo's admin console.
+
+    CreateExternalInvoiceResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [accepted, duplicate_ignored]
+        invoiceId:
+          type: string
+          description: >-
+            Mombongo's own external_invoices document id — this is what you
+            pass as invoiceId to every other endpoint below. It is not the
+            same value as externalInvoiceId.
+
+    CreateExternalInvoiceCheckoutRequest:
+      type: object
+      required: [invoiceId, method]
+      properties:
+        invoiceId:
+          type: string
+          description: Mombongo's invoiceId, from CreateExternalInvoiceResponse.
+        method:
+          $ref: '#/components/schemas/PaymentMethod'
+        phone:
+          type: string
+          description: Required when method is mobile_money. E.164-ish DRC format.
+        operator:
+          $ref: '#/components/schemas/MobileMoneyOperator'
+
+    CreateExternalInvoiceCheckoutResponse:
+      type: object
+      required: [status, providerRef]
+      properties:
+        status:
+          type: string
+          enum: [checkout_created]
+        providerRef:
+          type: string
+          description: Stripe PaymentIntent id (card) or PawaPay depositId (mobile_money).
+        clientSecret:
+          type: [string, 'null']
+          description: >-
+            card only. Pass to Stripe.js client-side to complete the
+            payment. Absent for mobile_money.
+        depositStatus:
+          type: string
+          description: >-
+            mobile_money only. PawaPay's initial acceptance status (e.g.
+            "ACCEPTED") — this is not the final payment outcome, which
+            arrives later via the paymentComplete webhook. Absent for card.
+
+    PublishedListing:
+      type: object
+      description: Same shape as Mombongo's own in-app listing browse.
+      properties:
+        id:
+          type: string
+        commodity:
+          type: string
+        province:
+          type: string
+        territory:
+          type: string
+        quantityKg:
+          type: number
+        quality:
+          type: string
+          enum: [A, B, C]
+        pricePerKgCdf:
+          type: number
+        sellerId:
+          type: string
+          description: The farmer's Mombongo user id.
+        status:
+          type: string
+          enum: [active]
+          description: Only active listings are ever returned by this endpoint.
+
+    GetExternalPublishedListingsRequest:
+      type: object
+      properties:
+        commodity:
+          type: string
+          description: Optional exact-match filter.
+        province:
+          type: string
+          description: Optional exact-match filter.
+        limit:
+          type: integer
+          default: 20
+
+    GetExternalPublishedListingsResponse:
+      type: object
+      properties:
+        listings:
+          type: array
+          items:
+            $ref: '#/components/schemas/PublishedListing'
+
+    CreateExternalHarvestOfferRequest:
+      type: object
+      required: [listingId, offerQuantityKg, offerPricePerKgCdf]
+      properties:
+        listingId:
+          type: string
+          description: id from a PublishedListing.
+        offerQuantityKg:
+          type: number
+          exclusiveMinimum: 0
+          description: Must not exceed the listing's own quantityKg.
+        offerPricePerKgCdf:
+          type: number
+          exclusiveMinimum: 0
+        message:
+          type: [string, 'null']
+          description: Optional note shown to the farmer.
+
+    CreateExternalHarvestOfferResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [accepted]
+        offerId:
+          type: string
+
+    ErrorPlainText:
+      type: string
+      description: A human-readable error message, sent as text/plain, not JSON.
+
+  responses:
+    InvalidSignature:
+      description: Missing/invalid x-partner-id or x-partner-signature, or an inactive partner account.
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/ErrorPlainText'
+            example: Invalid signature
+    MissingFields:
+      description: Required fields missing or invalid.
+      content:
+        text/plain:
+          schema:
+            $ref: '#/components/schemas/ErrorPlainText'
+
+paths:
+  /createExternalInvoice:
+    post:
+      operationId: createExternalInvoice
+      summary: Create an invoice for a Mombongo user to pay (partner-originated flow)
+      description: >-
+        Use this when your own system originates the invoice — the flow you
+        already integrated. Not used for the harvest-sale flow, where
+        Mombongo creates the invoice itself and tells you via the
+        invoiceIssued webhook instead.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExternalInvoiceRequest'
+      responses:
+        '200':
+          description: Accepted (or a duplicate of an already-accepted externalInvoiceId).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateExternalInvoiceResponse'
+        '400':
+          $ref: '#/components/responses/MissingFields'
+        '401':
+          $ref: '#/components/responses/InvalidSignature'
+        '405':
+          description: Method not allowed — this endpoint only accepts POST.
+
+  /createExternalInvoiceCheckout:
+    post:
+      operationId: createExternalInvoiceCheckout
+      summary: Create a payment session (card or mobile money) for a pending invoice
+      description: >-
+        Works identically regardless of whether the invoice came from
+        createExternalInvoice or from the harvest-sale flow (the
+        invoiceIssued webhook) — this endpoint and everything downstream of
+        it is unmodified by Sprint DP.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExternalInvoiceCheckoutRequest'
+      responses:
+        '200':
+          description: Checkout session created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateExternalInvoiceCheckoutResponse'
+        '400':
+          description: Missing required fields, or phone/operator missing for mobile_money.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '401':
+          $ref: '#/components/responses/InvalidSignature'
+        '404':
+          description: Invoice not found, or it does not belong to your partner id.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '409':
+          description: A checkout already exists for this invoice, or it's already resolved.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  status:
+                    type: string
+                    enum: [already_in_progress]
+                  currentStatus:
+                    $ref: '#/components/schemas/InvoiceStatus'
+        '500':
+          description: Your partner account has no linked merchant account — contact us.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '501':
+          description: method was bank_transfer — not implemented yet.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '502':
+          description: The payment provider (Stripe/PawaPay) call itself failed.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+
+  /getExternalPublishedListings:
+    post:
+      operationId: getExternalPublishedListings
+      summary: Browse currently-published harvest listings (New — Sprint DP)
+      description: >-
+        Read-only. GET-shaped but implemented as POST so the request body
+        can be signed the same way as every other endpoint here — a GET has
+        no body to sign.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetExternalPublishedListingsRequest'
+      responses:
+        '200':
+          description: Listings matching the given filters, newest first.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetExternalPublishedListingsResponse'
+        '401':
+          $ref: '#/components/responses/InvalidSignature'
+        '405':
+          description: Method not allowed — this endpoint only accepts POST.
+
+  /createExternalHarvestOffer:
+    post:
+      operationId: createExternalHarvestOffer
+      summary: Submit an offer on a published listing (New — Sprint DP)
+      description: >-
+        Validation (quantity within the listing's remaining amount, price >
+        0, listing still active) is identical to the in-app merchant path —
+        both call the same shared validation logic. If the farmer later
+        selects your offer, you'll receive the invoiceIssued webhook below;
+        if they pick someone else's, your offer's status becomes "declined"
+        with no notification (poll is not available yet — ask us if you
+        need one).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateExternalHarvestOfferRequest'
+      responses:
+        '200':
+          description: Offer accepted (pending — not yet won or declined).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/CreateExternalHarvestOfferResponse'
+        '400':
+          description: >-
+            Missing required fields, or the shared validation rejected the
+            offer (listing not active, quantity exceeds what's available,
+            price <= 0).
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '401':
+          $ref: '#/components/responses/InvalidSignature'
+        '500':
+          description: Your partner account has no linked merchant account — contact us.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+
+webhooks:
+  paymentComplete:
+    post:
+      operationId: paymentComplete
+      summary: Sent when an invoice you can pay (card or mobile money) reaches a final state
+      description: >-
+        Fires once, on the transition to "paid" or "failed" — not on every
+        write to the invoice. Unchanged since Sprint AI; fires the same way
+        regardless of invoice origin.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [externalInvoiceId, status, amountUsd, paidAt]
+              properties:
+                externalInvoiceId:
+                  type: string
+                  description: >-
+                    Your own externalInvoiceId for a partner-originated
+                    invoice. For a harvest-sale invoice, this is Mombongo's
+                    invoiceId instead — there is no partner-originated id
+                    for one of those (see notes on invoiceIssued below).
+                status:
+                  type: string
+                  enum: [paid, failed]
+                amountUsd:
+                  type: number
+                paidAt:
+                  type: string
+                  format: date-time
+      responses:
+        '200':
+          description: Any 2xx response is treated as delivered. Non-2xx triggers a retry.
+
+  invoiceIssued:
+    post:
+      operationId: invoiceIssued
+      summary: Sent when a farmer selects your offer, creating a new invoice (New — Sprint DP)
+      description: >-
+        This is the first thing you learn about a harvest-sale invoice —
+        there is no createExternalInvoice call for these, since Mombongo
+        (not you) originates them. Pay the invoice the normal way via
+        createExternalInvoiceCheckout once you've decided to.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [invoiceId, farmerId, listingId, amountUsd, quantityKg, commodity]
+              properties:
+                invoiceId:
+                  type: string
+                  description: >-
+                    Mombongo's own external_invoices document id — pass
+                    this directly as invoiceId to createExternalInvoiceCheckout.
+                    There is no separate externalInvoiceId field for a
+                    harvest-sale invoice; this value fills that role too.
+                farmerId:
+                  type: string
+                  description: The farmer's Mombongo user id.
+                listingId:
+                  type: string
+                amountUsd:
+                  type: number
+                  description: >-
+                    Your offerQuantityKg × offerPricePerKgCdf, converted to
+                    USD at the exchange rate live at the moment the farmer
+                    selected your offer — not necessarily the rate in effect
+                    when you submitted the offer.
+                quantityKg:
+                  type: number
+                  description: The winning offer's quantity — your own offerQuantityKg echoed back.
+                commodity:
+                  type: string
+      responses:
+        '200':
+          description: Any 2xx response is treated as delivered. Non-2xx triggers a retry.
