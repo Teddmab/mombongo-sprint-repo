@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Mombongo Partner API
-  version: 1.1.1
+  version: 1.2.0
   description: |
     API surface for external partners integrating with Mombongo's payment
     and marketplace rails. AROM is the first (and currently only) partner.
@@ -172,11 +172,13 @@ components:
 
     PaymentMethod:
       type: string
-      enum: [card, mobile_money, bank_transfer]
+      enum: [mobile_money, bank_transfer]
       description: >-
-        bank_transfer is accepted as a value but not yet implemented —
-        calling createExternalInvoiceCheckout with method "bank_transfer"
-        returns 501. No provider has been chosen for it yet.
+        card was removed platform-wide (never processed a real payment) —
+        mobile_money is the only implemented method today. bank_transfer
+        is accepted as a value but not yet implemented — calling
+        createExternalInvoiceCheckout with method "bank_transfer" returns
+        501. No provider has been chosen for it yet.
 
     MobileMoneyOperator:
       type: string
@@ -236,25 +238,20 @@ components:
 
     CreateExternalInvoiceCheckoutResponse:
       type: object
-      required: [status, providerRef]
+      required: [status, providerRef, depositStatus]
       properties:
         status:
           type: string
           enum: [checkout_created]
         providerRef:
           type: string
-          description: Stripe PaymentIntent id (card) or PawaPay depositId (mobile_money).
-        clientSecret:
-          type: [string, 'null']
-          description: >-
-            card only. Pass to Stripe.js client-side to complete the
-            payment. Absent for mobile_money.
+          description: PawaPay depositId.
         depositStatus:
           type: string
           description: >-
-            mobile_money only. PawaPay's initial acceptance status (e.g.
-            "ACCEPTED") — this is not the final payment outcome, which
-            arrives later via the paymentComplete webhook. Absent for card.
+            PawaPay's initial acceptance status (e.g. "ACCEPTED") — this
+            is not the final payment outcome, which arrives later via the
+            paymentComplete webhook.
 
     PublishedListing:
       type: object
@@ -383,7 +380,7 @@ paths:
   /createExternalInvoiceCheckout:
     post:
       operationId: createExternalInvoiceCheckout
-      summary: Create a payment session (card or mobile money) for a pending invoice
+      summary: Create a mobile-money payment session for a pending invoice
       description: >-
         Works identically regardless of whether the invoice came from
         createExternalInvoice or from the harvest-sale flow (the
@@ -441,7 +438,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPlainText'
         '502':
-          description: The payment provider (Stripe/PawaPay) call itself failed.
+          description: The PawaPay call itself failed.
           content:
             text/plain:
               schema:
@@ -520,7 +517,7 @@ webhooks:
   paymentComplete:
     post:
       operationId: paymentComplete
-      summary: Sent when an invoice you can pay (card or mobile money) reaches a final state
+      summary: Sent when an invoice reaches a final state (paid or failed)
       description: >-
         Fires once, on the transition to "paid" or "failed" — not on every
         write to the invoice. Unchanged since Sprint AI; fires the same way
