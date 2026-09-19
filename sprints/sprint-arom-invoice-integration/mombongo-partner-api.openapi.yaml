@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Mombongo Partner API
-  version: 1.1.0
+  version: 1.3.0
   description: |
     API surface for external partners integrating with Mombongo's payment
     and marketplace rails. AROM is the first (and currently only) partner.
@@ -68,6 +68,53 @@ info:
     button, so if you were down when we tried, tell us and we can resend it
     by hand rather than you needing to reconcile from a polling loop.
 
+    Both outbound webhooks land on the same `webhookUrl` — every payload
+    carries an `event` field (`"payment_complete"` or `"invoice_issued"`)
+    so your receiver can route without guessing from which other fields
+    happen to be present.
+
+    ## Worked example — signing a request
+
+    A full, verifiable example for `createExternalHarvestOffer`, so you
+    can check your own implementation produces the exact same signature
+    for the exact same input before pointing it at a real secret.
+
+    Given `hmacSecret = "test_hmac_secret_do_not_use_in_production"` and
+    this exact raw request body (note: no extra whitespace — sign the
+    bytes you actually send, not a pretty-printed version):
+
+    ```
+    {"listingId":"listing_abc123","offerQuantityKg":500,"offerPricePerKgCdf":450}
+    ```
+
+    ```bash
+    echo -n '{"listingId":"listing_abc123","offerQuantityKg":500,"offerPricePerKgCdf":450}' \
+      | openssl dgst -sha256 -hmac "test_hmac_secret_do_not_use_in_production"
+    ```
+
+    produces:
+
+    ```
+    02abf6e9259aec73dcb388cc9e3d35d10075a5f9ca47d6351efa9d1f810f6c60
+    ```
+
+    So the full request is:
+
+    ```bash
+    curl -X POST https://europe-west1-mombongo-dev.cloudfunctions.net/createExternalHarvestOffer \
+      -H "content-type: application/json" \
+      -H "x-partner-id: arom" \
+      -H "x-partner-signature: 02abf6e9259aec73dcb388cc9e3d35d10075a5f9ca47d6351efa9d1f810f6c60" \
+      -d '{"listingId":"listing_abc123","offerQuantityKg":500,"offerPricePerKgCdf":450}'
+    ```
+
+    If your computed signature doesn't match ours for this exact input,
+    the mismatch is almost always in how the body gets serialized before
+    signing — a JSON library that reorders keys, adds whitespace, or
+    changes number formatting will produce a different byte sequence and
+    therefore a different signature, even though the parsed JSON is
+    "the same." Sign the literal bytes you're about to send on the wire.
+
     ## Idempotency
 
     `createExternalInvoice` is idempotent on `externalInvoiceId` — calling
@@ -125,11 +172,13 @@ components:
 
     PaymentMethod:
       type: string
-      enum: [card, mobile_money, bank_transfer]
+      enum: [mobile_money, bank_transfer]
       description: >-
-        bank_transfer is accepted as a value but not yet implemented —
-        calling createExternalInvoiceCheckout with method "bank_transfer"
-        returns 501. No provider has been chosen for it yet.
+        card was removed platform-wide (never processed a real payment) —
+        mobile_money is the only implemented method today. bank_transfer
+        is accepted as a value but not yet implemented — calling
+        createExternalInvoiceCheckout with method "bank_transfer" returns
+        501. No provider has been chosen for it yet.
 
     MobileMoneyOperator:
       type: string
@@ -189,29 +238,27 @@ components:
 
     CreateExternalInvoiceCheckoutResponse:
       type: object
-      required: [status, providerRef]
+      required: [status, providerRef, depositStatus]
       properties:
         status:
           type: string
           enum: [checkout_created]
         providerRef:
           type: string
-          description: Stripe PaymentIntent id (card) or PawaPay depositId (mobile_money).
-        clientSecret:
-          type: [string, 'null']
-          description: >-
-            card only. Pass to Stripe.js client-side to complete the
-            payment. Absent for mobile_money.
+          description: PawaPay depositId.
         depositStatus:
           type: string
           description: >-
-            mobile_money only. PawaPay's initial acceptance status (e.g.
-            "ACCEPTED") — this is not the final payment outcome, which
-            arrives later via the paymentComplete webhook. Absent for card.
+            PawaPay's initial acceptance status (e.g. "ACCEPTED") — this
+            is not the final payment outcome, which arrives later via the
+            paymentComplete webhook.
 
     PublishedListing:
       type: object
-      description: Same shape as Mombongo's own in-app listing browse.
+      description: >-
+        An explicit, curated response shape (v1.3.0) — not a raw dump of
+        Mombongo's internal listing record. Fields not listed here (e.g.
+        sellerRole, createdAt/updatedAt) are never sent.
       properties:
         id:
           type: string
@@ -220,17 +267,41 @@ components:
         province:
           type: string
         territory:
-          type: string
+          type: [string, 'null']
         quantityKg:
           type: number
         quality:
-          type: string
-          enum: [A, B, C]
+          type: [string, 'null']
+          enum: [A, B, C, null]
         pricePerKgCdf:
           type: number
         sellerId:
           type: string
           description: The farmer's Mombongo user id.
+        sellerName:
+          type: [string, 'null']
+          description: >-
+            The farmer's display name where Mombongo has one on file,
+            otherwise a generic placeholder ("Vendeur") — never assume this
+            uniquely or reliably identifies the farmer.
+        photoUrls:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: >-
+            Signed, time-limited read URLs (valid 7 days from when the
+            photo was uploaded, not from when you fetch this listing) — do
+            not cache these long-term. Empty when the farmer hasn't
+            uploaded a photo, which is common.
+        description:
+          type: string
+        availableFrom:
+          type: [string, 'null']
+          format: date-time
+        availableUntil:
+          type: [string, 'null']
+          format: date-time
         status:
           type: string
           enum: [active]
@@ -336,7 +407,7 @@ paths:
   /createExternalInvoiceCheckout:
     post:
       operationId: createExternalInvoiceCheckout
-      summary: Create a payment session (card or mobile money) for a pending invoice
+      summary: Create a mobile-money payment session for a pending invoice
       description: >-
         Works identically regardless of whether the invoice came from
         createExternalInvoice or from the harvest-sale flow (the
@@ -394,7 +465,7 @@ paths:
               schema:
                 $ref: '#/components/schemas/ErrorPlainText'
         '502':
-          description: The payment provider (Stripe/PawaPay) call itself failed.
+          description: The PawaPay call itself failed.
           content:
             text/plain:
               schema:
@@ -408,6 +479,13 @@ paths:
         Read-only. GET-shaped but implemented as POST so the request body
         can be signed the same way as every other endpoint here — a GET has
         no body to sign.
+
+
+        Your account may be scoped to a subset of commodities (set on our
+        side at onboarding, e.g. pineapple only) — the `commodity` filter
+        below can only narrow within that scope, never outside it. If
+        you're not seeing a product you expect, this is the first thing to
+        check with us before assuming it's a bug.
       requestBody:
         required: false
         content:
@@ -473,19 +551,25 @@ webhooks:
   paymentComplete:
     post:
       operationId: paymentComplete
-      summary: Sent when an invoice you can pay (card or mobile money) reaches a final state
+      summary: Sent when an invoice reaches a final state (paid or failed)
       description: >-
         Fires once, on the transition to "paid" or "failed" — not on every
         write to the invoice. Unchanged since Sprint AI; fires the same way
         regardless of invoice origin.
+
+        This and invoiceIssued below land on the same webhookUrl — check
+        the `event` field first to route the payload.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [externalInvoiceId, status, amountUsd, paidAt]
+              required: [event, externalInvoiceId, status, amountUsd, paidAt]
               properties:
+                event:
+                  type: string
+                  enum: [payment_complete]
                 externalInvoiceId:
                   type: string
                   description: >-
@@ -514,14 +598,20 @@ webhooks:
         there is no createExternalInvoice call for these, since Mombongo
         (not you) originates them. Pay the invoice the normal way via
         createExternalInvoiceCheckout once you've decided to.
+
+        Lands on the same webhookUrl as paymentComplete above — check the
+        `event` field first to route the payload.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [invoiceId, farmerId, listingId, amountUsd, quantityKg, commodity]
+              required: [event, invoiceId, farmerId, listingId, amountUsd, quantityKg, commodity]
               properties:
+                event:
+                  type: string
+                  enum: [invoice_issued]
                 invoiceId:
                   type: string
                   description: >-
