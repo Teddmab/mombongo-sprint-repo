@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Mombongo Partner API
-  version: 1.3.0
+  version: 1.4.0
   description: |
     API surface for external partners integrating with Mombongo's payment
     and marketplace rails. AROM is the first (and currently only) partner.
@@ -355,6 +355,194 @@ components:
         offerId:
           type: string
 
+    ExternalHarvestOfferStatus:
+      type: string
+      enum: [pending, accepted, declined]
+      description: >-
+        `pending` becomes `accepted` or `declined` exactly once and never
+        changes again. The offered quantity and price are never amended —
+        `accepted` means the farmer accepted your offer as submitted.
+
+    ExternalOfferSeller:
+      type: object
+      description: >-
+        Who is selling. Present only on `accepted` offers; `null` on
+        `pending` and `declined` offers.
+      required: [id, displayName]
+      properties:
+        id:
+          type: string
+          description: >-
+            The farmer's stable Mombongo user id, snapshotted on the offer
+            when you submitted it — the same value as `sellerId` on the
+            listing you offered against and as `farmerId` on the
+            `invoiceIssued` webhook. Safe to use as a key.
+        displayName:
+          type: [string, 'null']
+          description: >-
+            A display name only — trimmed, at most 80 characters. `null`
+            when Mombongo has no usable name: the listing carries only a
+            generic placeholder ("Vendeur", "Agriculteur"), the value is
+            empty, or it looks like an email address or phone number. Never
+            fabricated. It is a label for a person to read, **not** a
+            verified identity — do not use it to match or authenticate a
+            farmer; use `id`.
+
+    ExternalOfferThumbnail:
+      type: object
+      required: [url, expiresAt]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: >-
+            A read URL generated fresh on every call to this endpoint, valid
+            for about one hour. It is not the (possibly long-expired) URL the
+            listing was originally published with.
+        expiresAt:
+          type: string
+          format: date-time
+          description: >-
+            Exactly when `url` stops working. Do not persist `url` beyond
+            this time — call the endpoint again to get a new one.
+
+    ExternalOfferListing:
+      type: object
+      description: >-
+        The listing the offer was made on, as it stands now. Present only on
+        `accepted` offers; `null` on `pending` and `declined` offers, and
+        `null` on an accepted offer whose listing no longer exists (or
+        cannot be verified to belong to that offer's farmer). Once an offer
+        is accepted the listing is `sold` and no longer appears in
+        `getExternalPublishedListings`, so this is where you can still
+        retrieve it.
+      required: [commodity, commodityCode, province, territory, thumbnail]
+      properties:
+        commodity:
+          type: [string, 'null']
+          description: Human-readable product name as the farmer published it (e.g. "Ananas").
+        commodityCode:
+          type: [string, 'null']
+          description: >-
+            Mombongo's canonical commodity code (e.g. `ananas`) when one is
+            stored on the listing, otherwise `null`. Never derived from
+            `commodity` — a `null` here does not mean the product is
+            unknown, only that no code was recorded.
+        province:
+          type: [string, 'null']
+        territory:
+          type: [string, 'null']
+          description: "`null` when the farmer left it blank."
+        thumbnail:
+          oneOf:
+            - $ref: '#/components/schemas/ExternalOfferThumbnail'
+            - type: 'null'
+          description: >-
+            The listing's first usable photo, or `null` — the listing has no
+            photo (common), the stored photo could not be safely resolved,
+            or signing a fresh URL failed. **Treat the image as optional
+            presentation context**: your UI must render correctly with no
+            thumbnail, and must handle the image failing to load. Mombongo
+            does not verify the file still exists before issuing the URL.
+
+    ExternalHarvestOffer:
+      type: object
+      description: >-
+        An offer you submitted, as Mombongo currently holds it. The first
+        ten fields are the reconciliation contract and are unchanged since
+        v1.3; `seller` and `listing` were added in v1.4.0 and are purely
+        additive (clients that ignore unknown fields are unaffected).
+
+
+        **This is not proof of delivery.** `status: accepted` and an
+        `invoiceId` mean the farmer accepted your offer and Mombongo issued
+        the invoice — nothing here says the goods have arrived or been
+        inspected. **Mombongo does not track physical reception** of
+        harvest-sale goods; that state belongs entirely to your own system,
+        and no field or event from us will tell you it happened.
+      required:
+        [offerId, externalReference, listingId, status, quantityKg, unitPriceCdf, currency, createdAt, updatedAt, invoiceId, seller, listing]
+      properties:
+        offerId:
+          type: string
+        externalReference:
+          type: [string, 'null']
+          description: Your own reference, if you supplied one when submitting.
+        listingId:
+          type: string
+        status:
+          $ref: '#/components/schemas/ExternalHarvestOfferStatus'
+        quantityKg:
+          type: number
+          description: The quantity you offered — also the quantity invoiced if accepted.
+        unitPriceCdf:
+          type: number
+          description: The price per kg you offered — also the price invoiced if accepted.
+        currency:
+          type: string
+          enum: [CDF]
+        createdAt:
+          type: [string, 'null']
+          format: date-time
+        updatedAt:
+          type: [string, 'null']
+          format: date-time
+          description: >-
+            The authoritative time of the last change to this offer (its
+            creation, or its acceptance/decline). Use it to decide whether
+            your cached copy is stale.
+        invoiceId:
+          type: [string, 'null']
+          description: Set once the offer is accepted and the invoice issued; otherwise `null`.
+        seller:
+          oneOf:
+            - $ref: '#/components/schemas/ExternalOfferSeller'
+            - type: 'null'
+        listing:
+          oneOf:
+            - $ref: '#/components/schemas/ExternalOfferListing'
+            - type: 'null'
+
+    GetExternalHarvestOfferRequest:
+      type: object
+      description: Provide exactly one of `offerId` or `externalReference`.
+      properties:
+        offerId:
+          type: string
+        externalReference:
+          type: string
+
+    GetExternalHarvestOffersRequest:
+      type: object
+      properties:
+        status:
+          $ref: '#/components/schemas/ExternalHarvestOfferStatus'
+        updatedSince:
+          type: string
+          format: date-time
+          description: Only offers changed strictly after this time.
+        limit:
+          type: integer
+          minimum: 1
+          maximum: 100
+          default: 20
+        cursor:
+          type: string
+          description: The `nextCursor` from the previous page.
+
+    GetExternalHarvestOffersResponse:
+      type: object
+      required: [offers, nextCursor]
+      properties:
+        offers:
+          type: array
+          description: Oldest-changed first (by `updatedAt`), so you can page forward in time from a cursor.
+          items:
+            $ref: '#/components/schemas/ExternalHarvestOffer'
+        nextCursor:
+          type: [string, 'null']
+          description: Pass back as `cursor` for the next page; `null` when there is no further page.
+
     ErrorPlainText:
       type: string
       description: A human-readable error message, sent as text/plain, not JSON.
@@ -513,9 +701,9 @@ paths:
         0, listing still active) is identical to the in-app merchant path —
         both call the same shared validation logic. If the farmer later
         selects your offer, you'll receive the invoiceIssued webhook below;
-        if they pick someone else's, your offer's status becomes "declined"
-        with no notification (poll is not available yet — ask us if you
-        need one).
+        if they pick someone else's, your offer's status becomes "declined".
+        You can read the current state of any of your offers with
+        `getExternalHarvestOffer` / `getExternalHarvestOffers` below.
       requestBody:
         required: true
         content:
@@ -546,6 +734,151 @@ paths:
             text/plain:
               schema:
                 $ref: '#/components/schemas/ErrorPlainText'
+
+  /getExternalHarvestOffer:
+    post:
+      operationId: getExternalHarvestOffer
+      summary: Look up one of your offers (v1.4.0 adds seller/listing on accepted offers)
+      description: >-
+        Returns the current state of a single offer you submitted, found by
+        `offerId` or by your own `externalReference` (exactly one of the
+        two). An offer that belongs to another partner is indistinguishable
+        from one that does not exist: both return 404.
+
+
+        **Accepted offers carry `seller` and `listing`.** They exist so you
+        can show a person which delivery this offer refers to — who is
+        selling, what product, where from, and a photo — after the listing
+        has left the active feed. `pending` and `declined` offers return
+        `seller: null` and `listing: null`.
+
+
+        - `listing.thumbnail.url` is issued fresh on every call and expires
+          at `listing.thumbnail.expiresAt` (about one hour). Do not store the
+          URL; store nothing but what you need and call again for a new one.
+        - Enrichment is best-effort and never causes an error: if the
+          listing is gone or the image cannot be signed you still receive
+          `200` with the offer, and `seller.displayName` / `listing` /
+          `listing.thumbnail` set to `null` as described on their schemas.
+        - The image is optional presentation context. Your app must work
+          when it is `null` or fails to load.
+        - **This is not proof of delivery.** Mombongo does not track
+          physical reception; you own that state.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetExternalHarvestOfferRequest'
+      responses:
+        '200':
+          description: The offer.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExternalHarvestOffer'
+              examples:
+                accepted:
+                  summary: An accepted offer
+                  value:
+                    offerId: offer_9f2c
+                    externalReference: arom-po-1042
+                    listingId: listing_abc123
+                    status: accepted
+                    quantityKg: 500
+                    unitPriceCdf: 450
+                    currency: CDF
+                    createdAt: '2026-09-18T08:12:44.120Z'
+                    updatedAt: '2026-09-19T14:03:10.871Z'
+                    invoiceId: inv_71d0
+                    seller:
+                      id: 3fXk2Qe1LdN0sYw9
+                      displayName: Jean Mbala
+                    listing:
+                      commodity: Ananas
+                      commodityCode: ananas
+                      province: Kongo Central
+                      territory: Mbanza-Ngungu
+                      thumbnail:
+                        url: https://storage.googleapis.com/example-bucket/listings/3fXk2Qe1LdN0sYw9/listing_abc123/1700000000000-photo.jpg?X-Goog-Expires=3600&X-Goog-Signature=0a1b2c
+                        expiresAt: '2026-09-20T11:00:00.000Z'
+                pending:
+                  summary: A pending (or declined) offer
+                  value:
+                    offerId: offer_a41b
+                    externalReference: null
+                    listingId: listing_abc123
+                    status: pending
+                    quantityKg: 200
+                    unitPriceCdf: 430
+                    currency: CDF
+                    createdAt: '2026-09-18T09:00:00.000Z'
+                    updatedAt: '2026-09-18T09:00:00.000Z'
+                    invoiceId: null
+                    seller: null
+                    listing: null
+        '400':
+          description: Neither or both of `offerId` and `externalReference` were supplied.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '401':
+          $ref: '#/components/responses/InvalidSignature'
+        '404':
+          description: No such offer for your partner account.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '405':
+          description: Method not allowed — this endpoint only accepts POST.
+
+  /getExternalHarvestOffers:
+    post:
+      operationId: getExternalHarvestOffers
+      summary: List your offers (v1.4.0 adds seller/listing on accepted offers)
+      description: >-
+        A paginated feed of your own offers only, oldest-changed first, for
+        reconciliation. Filter server-side with `status` (for example
+        `accepted`) and `updatedSince`; there is no need to fetch everything
+        and filter locally.
+
+
+        Each row has exactly the shape returned by `getExternalHarvestOffer`,
+        including the same accepted-only `seller` / `listing` enrichment and
+        the same rules for the thumbnail (fresh per call, expires at
+        `expiresAt`, optional, never an error). Rows that are not `accepted`
+        carry `seller: null` and `listing: null`. Listing and image work is
+        done once per distinct listing per page, however many offers refer to
+        it.
+
+
+        **This is not proof of delivery.** Mombongo does not track physical
+        reception; you own that state.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/GetExternalHarvestOffersRequest'
+      responses:
+        '200':
+          description: One page of offers.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GetExternalHarvestOffersResponse'
+        '400':
+          description: '`status` is not one of pending/accepted/declined, or `updatedSince` / `cursor` is malformed.'
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
+        '401':
+          $ref: '#/components/responses/InvalidSignature'
+        '405':
+          description: Method not allowed — this endpoint only accepts POST.
 
 webhooks:
   paymentComplete:
