@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Mombongo Partner API
-  version: 1.2.0
+  version: 1.3.0
   description: |
     API surface for external partners integrating with Mombongo's payment
     and marketplace rails. AROM is the first (and currently only) partner.
@@ -255,7 +255,10 @@ components:
 
     PublishedListing:
       type: object
-      description: Same shape as Mombongo's own in-app listing browse.
+      description: >-
+        An explicit, curated response shape (v1.3.0) — not a raw dump of
+        Mombongo's internal listing record. Fields not listed here (e.g.
+        sellerRole, createdAt/updatedAt) are never sent.
       properties:
         id:
           type: string
@@ -264,17 +267,41 @@ components:
         province:
           type: string
         territory:
-          type: string
+          type: [string, 'null']
         quantityKg:
           type: number
         quality:
-          type: string
-          enum: [A, B, C]
+          type: [string, 'null']
+          enum: [A, B, C, null]
         pricePerKgCdf:
           type: number
         sellerId:
           type: string
           description: The farmer's Mombongo user id.
+        sellerName:
+          type: [string, 'null']
+          description: >-
+            The farmer's display name where Mombongo has one on file,
+            otherwise a generic placeholder ("Vendeur") — never assume this
+            uniquely or reliably identifies the farmer.
+        photoUrls:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: >-
+            Signed, time-limited read URLs (valid 7 days from when the
+            photo was uploaded, not from when you fetch this listing) — do
+            not cache these long-term. Empty when the farmer hasn't
+            uploaded a photo, which is common.
+        description:
+          type: string
+        availableFrom:
+          type: [string, 'null']
+          format: date-time
+        availableUntil:
+          type: [string, 'null']
+          format: date-time
         status:
           type: string
           enum: [active]
@@ -452,6 +479,13 @@ paths:
         Read-only. GET-shaped but implemented as POST so the request body
         can be signed the same way as every other endpoint here — a GET has
         no body to sign.
+
+
+        Your account may be scoped to a subset of commodities (set on our
+        side at onboarding, e.g. pineapple only) — the `commodity` filter
+        below can only narrow within that scope, never outside it. If
+        you're not seeing a product you expect, this is the first thing to
+        check with us before assuming it's a bug.
       requestBody:
         required: false
         content:
