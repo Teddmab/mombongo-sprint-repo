@@ -1,7 +1,7 @@
 openapi: 3.1.0
 info:
   title: Mombongo Partner API
-  version: 1.4.0
+  version: 1.5.0
   description: |
     API surface for external partners integrating with Mombongo's payment
     and marketplace rails. AROM is the first (and currently only) partner.
@@ -119,11 +119,31 @@ info:
 
     `createExternalInvoice` is idempotent on `externalInvoiceId` — calling
     it twice with the same id returns `{ "status": "duplicate_ignored" }`
-    and the original invoice, rather than creating a second one. There is
-    no equivalent idempotency key on `createExternalHarvestOffer` — each
-    call creates a new offer, since a legitimate use case (offering twice
-    at different prices) looks identical to an accidental retry from our
-    side of that boundary.
+    and the original invoice, rather than creating a second one.
+
+    `createExternalHarvestOffer` **requires** an `Idempotency-Key` header
+    as of contract v2 (2026-09) — v1 had no duplicate-submission
+    protection at all: two identical requests created two independent
+    offers, and a request that timed out after Mombongo committed could
+    never be reconciled without risking a second offer. Identity is
+    scoped by `(your partner id, key)`, so two partners can never collide
+    on the same key value. A canonical request fingerprint (`listingId` +
+    `offerQuantityKg` + `offerPricePerKgCdf` + normalized `message` +
+    `externalReference`) distinguishes a legitimate replay from a key
+    reused for a genuinely different request:
+
+    - same key + same fingerprint → returns the original result again,
+      `replayed: true`
+    - same key + different fingerprint → `409`
+    - invalid request → `400`, before either the key or an offer is
+      written — safe to retry with the same key once fixed
+    - two truly simultaneous identical submissions → exactly one offer is
+      ever created
+
+    A request with no `Idempotency-Key` header is rejected with `400` —
+    there is no legacy no-header path anymore. Send a client-generated
+    unique value (a UUID is fine) per logical submission; reuse the same
+    value only when retrying the exact same submission.
 
     ## Error responses
 
@@ -133,6 +153,24 @@ info:
     API. A few success/conflict responses that carry data are JSON (called
     out per-endpoint below). Don't assume every non-2xx body is parseable
     JSON.
+
+    ## Changelog
+
+    - **1.5.0** (2026-09) — `createExternalHarvestOffer` now requires an
+      `Idempotency-Key` header (breaking — a request without one is
+      rejected with `400`); response shape changed from
+      `{status, offerId}` to `{submissionStatus, offerId,
+      externalReference, replayed}`. New `offer_status_changed` webhook.
+      `invoiceIssued` bumped to schemaVersion 2 (additive — adds eventId/
+      offerId/externalReference/unitPriceCdf/totalAmountCdf/currency,
+      every v1 field unchanged). New `externalReference` request field on
+      `createExternalHarvestOffer`.
+    - **1.4.0** — `getExternalHarvestOffer`/`getExternalHarvestOffers`
+      (reconciliation/read API); accepted offers carry `seller`/`listing`
+      enrichment.
+    - **1.3.0** — `card` removed as a payment method.
+    - **1.2.0** — Sprint DP: `getExternalPublishedListings`,
+      `createExternalHarvestOffer`, `invoiceIssued` v1.
 
 servers:
   - url: https://europe-west1-mombongo-dev.cloudfunctions.net
@@ -345,15 +383,44 @@ components:
         message:
           type: [string, 'null']
           description: Optional note shown to the farmer.
+        externalReference:
+          type: [string, 'null']
+          description: >-
+            Your own reference for this offer, echoed back on every
+            response and webhook that concerns it (this response,
+            getExternalHarvestOffer(s), offer_status_changed, and
+            invoiceIssued). Part of the idempotency fingerprint — changing
+            it changes the fingerprint even if every other field is
+            identical. Optional, but recommended if you need to look up an
+            offer by your own id rather than Mombongo's offerId.
 
     CreateExternalHarvestOfferResponse:
       type: object
+      description: >-
+        Contract v2 — an HTTP-level acknowledgement only. submissionStatus
+        never signals business acceptance; that's exclusively communicated
+        by the offer_status_changed webhook, or by polling
+        getExternalHarvestOffer.
+      required: [submissionStatus, offerId, replayed]
       properties:
-        status:
+        submissionStatus:
           type: string
-          enum: [accepted]
+          enum: [submitted]
+          description: >-
+            Always "submitted" on a 200 — this field only ever means "we
+            received and processed this HTTP request", replacing v1's
+            ambiguous `status: "accepted"`.
         offerId:
           type: string
+        externalReference:
+          type: [string, 'null']
+          description: Echoes your own externalReference from the request, if you sent one.
+        replayed:
+          type: boolean
+          description: >-
+            true if this (Idempotency-Key, fingerprint) pair was already
+            processed and you're seeing the original result again, rather
+            than a newly created offer.
 
     ExternalHarvestOfferStatus:
       type: string
@@ -695,15 +762,31 @@ paths:
   /createExternalHarvestOffer:
     post:
       operationId: createExternalHarvestOffer
-      summary: Submit an offer on a published listing (New — Sprint DP)
+      summary: Submit an offer on a published listing (contract v2 — Idempotency-Key required)
       description: >-
         Validation (quantity within the listing's remaining amount, price >
         0, listing still active) is identical to the in-app merchant path —
         both call the same shared validation logic. If the farmer later
-        selects your offer, you'll receive the invoiceIssued webhook below;
-        if they pick someone else's, your offer's status becomes "declined".
-        You can read the current state of any of your offers with
-        `getExternalHarvestOffer` / `getExternalHarvestOffers` below.
+        selects your offer, you'll receive both the offer_status_changed
+        and invoiceIssued webhooks below (offer_status_changed first —
+        "accepted", fired right after the transaction commits — then
+        invoiceIssued); if they pick someone else's, you only receive
+        offer_status_changed with status "declined". You can also read the
+        current state of any of your offers with `getExternalHarvestOffer` /
+        `getExternalHarvestOffers` below at any time, independent of
+        webhook delivery.
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            maxLength: 200
+          description: >-
+            Required as of contract v2 — see the Idempotency section above.
+            1-200 characters, must not contain `/`. A request with this
+            header missing or empty is rejected with `400` before any
+            offer is created.
       requestBody:
         required: true
         content:
@@ -712,22 +795,37 @@ paths:
               $ref: '#/components/schemas/CreateExternalHarvestOfferRequest'
       responses:
         '200':
-          description: Offer accepted (pending — not yet won or declined).
+          description: >-
+            Request received and processed — this is an HTTP-level
+            acknowledgement only, never a business-acceptance signal. A
+            `replayed: true` response means this exact (key, fingerprint)
+            pair was already processed and you're seeing the original
+            result again, not a new offer.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/CreateExternalHarvestOfferResponse'
         '400':
           description: >-
-            Missing required fields, or the shared validation rejected the
-            offer (listing not active, quantity exceeds what's available,
-            price <= 0).
+            Missing required fields, a missing/malformed Idempotency-Key
+            header, or the shared validation rejected the offer (listing
+            not active, quantity exceeds what's available, price <= 0).
           content:
             text/plain:
               schema:
                 $ref: '#/components/schemas/ErrorPlainText'
         '401':
           $ref: '#/components/responses/InvalidSignature'
+        '409':
+          description: >-
+            This Idempotency-Key was already used for a request with a
+            different fingerprint (listingId/quantity/price/message/
+            externalReference) — not a safe retry. Use a new key for a
+            genuinely different submission.
+          content:
+            text/plain:
+              schema:
+                $ref: '#/components/schemas/ErrorPlainText'
         '500':
           description: Your partner account has no linked merchant account — contact us.
           content:
@@ -890,8 +988,9 @@ webhooks:
         write to the invoice. Unchanged since Sprint AI; fires the same way
         regardless of invoice origin.
 
-        This and invoiceIssued below land on the same webhookUrl — check
-        the `event` field first to route the payload.
+        This, offer_status_changed, and invoiceIssued below all land on
+        the same webhookUrl — check the `event` field first to route the
+        payload.
       requestBody:
         required: true
         content:
@@ -922,29 +1021,138 @@ webhooks:
         '200':
           description: Any 2xx response is treated as delivered. Non-2xx triggers a retry.
 
-  invoiceIssued:
+  offer_status_changed:
     post:
-      operationId: invoiceIssued
-      summary: Sent when a farmer selects your offer, creating a new invoice (New — Sprint DP)
+      operationId: offerStatusChanged
+      summary: >-
+        Authoritative accepted/declined signal for an offer you submitted
+        (New — contract v2, 2026-09)
       description: >-
-        This is the first thing you learn about a harvest-sale invoice —
-        there is no createExternalInvoice call for these, since Mombongo
-        (not you) originates them. Pay the invoice the normal way via
-        createExternalInvoiceCheckout once you've decided to.
+        Before this existed, harvest_offers status (pending/accepted/
+        declined) was never communicated to you at all — the only signal
+        you had that your offer won was invoiceIssued below, and a losing
+        offer produced nothing, ever, by design. This closes that gap.
 
-        Lands on the same webhookUrl as paymentComplete above — check the
-        `event` field first to route the payload.
+        Fires once the farmer selects a winner: you get exactly one event
+        for your own offer — `status: "accepted"` if you won,
+        `status: "declined"` if someone else did. If two different
+        partners both had offers on the same listing, each is notified
+        only about its own offer — a losing partner never learns who won,
+        only that it lost. Always fires *after* the winning-offer
+        transaction has committed, never from inside it, so you never
+        receive this more than once for the same actual state change.
+
+        For the winning offer, invoiceIssued below fires as a separate,
+        immediately-following event — expect both, in that order, not one
+        or the other.
+
+        Lands on the same webhookUrl as paymentComplete and invoiceIssued
+        — check the `event` field first to route the payload.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [event, invoiceId, farmerId, listingId, amountUsd, quantityKg, commodity]
+              required: [event, eventId, schemaVersion, occurredAt, partnerId, offerId, listingId, status, quantityKg, unitPriceCdf, currency]
+              properties:
+                event:
+                  type: string
+                  enum: [offer_status_changed]
+                eventId:
+                  type: string
+                  description: >-
+                    Deterministic — derived from (offerId, status), not
+                    random. A retry (automatic backoff, or a manual admin
+                    retry on our side) reuses the identical eventId, so you
+                    can dedupe deliveries on it safely.
+                schemaVersion:
+                  type: integer
+                  enum: [1]
+                occurredAt:
+                  type: string
+                  format: date-time
+                partnerId:
+                  type: string
+                offerId:
+                  type: string
+                externalReference:
+                  type: [string, 'null']
+                  description: Echoes the externalReference you sent when submitting the offer, if any.
+                listingId:
+                  type: string
+                status:
+                  type: string
+                  enum: [accepted, declined]
+                quantityKg:
+                  type: number
+                  description: Your own offerQuantityKg, echoed back.
+                unitPriceCdf:
+                  type: number
+                  description: Your own offerPricePerKgCdf, echoed back.
+                currency:
+                  type: string
+                  enum: [CDF]
+      responses:
+        '200':
+          description: Any 2xx response is treated as delivered. Non-2xx triggers a retry.
+
+  invoiceIssued:
+    post:
+      operationId: invoiceIssued
+      summary: >-
+        Sent when a farmer selects your offer, creating a new invoice
+        (schemaVersion 2, 2026-09 — additive, all v1 fields unchanged)
+      description: >-
+        This is the first thing you learn about the invoice itself for a
+        harvest-sale offer you won — there is no createExternalInvoice
+        call for these, since Mombongo (not you) originates them. Pay the
+        invoice the normal way via createExternalInvoiceCheckout once
+        you've decided to.
+
+        Fires immediately after offer_status_changed above (status:
+        "accepted") for the same offer — expect both.
+
+        **Receiving this event is not permission to pay.** It represents
+        an expected payable purchase pending your own physical reception
+        and quality/quantity approval of the delivery — Mombongo does not
+        currently enforce a "wait for reception" boundary server-side;
+        createExternalInvoiceCheckout will accept a checkout call
+        immediately after this event fires. Treat that as a documented
+        gap in your own integration's process, not a signal that paying
+        immediately is expected or safe.
+
+        Lands on the same webhookUrl as paymentComplete and
+        offer_status_changed above — check the `event` field first to
+        route the payload.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [event, invoiceId, farmerId, amountUsd, quantityKg, commodity]
               properties:
                 event:
                   type: string
                   enum: [invoice_issued]
+                eventId:
+                  type: string
+                  description: >-
+                    New in schemaVersion 2 — deterministic, derived from
+                    invoiceId. Safe to dedupe deliveries on.
+                schemaVersion:
+                  type: integer
+                  enum: [1, 2]
+                  description: >-
+                    v1 payloads (no eventId/offerId/externalReference/
+                    unitPriceCdf/totalAmountCdf/currency) may still arrive
+                    from in-flight retries of an event queued before this
+                    upgrade; treat a missing schemaVersion as 1.
+                occurredAt:
+                  type: string
+                  format: date-time
+                  description: New in schemaVersion 2.
                 invoiceId:
                   type: string
                   description: >-
@@ -952,21 +1160,44 @@ webhooks:
                     this directly as invoiceId to createExternalInvoiceCheckout.
                     There is no separate externalInvoiceId field for a
                     harvest-sale invoice; this value fills that role too.
+                offerId:
+                  type: [string, 'null']
+                  description: >-
+                    New in schemaVersion 2. The specific offer that won —
+                    listingId alone can't disambiguate which of your
+                    (possibly multiple) offers on the same listing this
+                    invoice came from. null only for an admin-assisted
+                    invoice, where no offer exists.
+                externalReference:
+                  type: [string, 'null']
+                  description: New in schemaVersion 2. Echoes the winning offer's externalReference, if any.
                 farmerId:
                   type: string
                   description: The farmer's Mombongo user id.
                 listingId:
-                  type: string
+                  type: [string, 'null']
                 amountUsd:
                   type: number
                   description: >-
                     Your offerQuantityKg × offerPricePerKgCdf, converted to
                     USD at the exchange rate live at the moment the farmer
                     selected your offer — not necessarily the rate in effect
-                    when you submitted the offer.
+                    when you submitted the offer. Kept for backward
+                    compatibility; prefer unitPriceCdf/totalAmountCdf
+                    (CDF, not exchange-rate-dependent) for reconciliation.
                 quantityKg:
                   type: number
                   description: The winning offer's quantity — your own offerQuantityKg echoed back.
+                unitPriceCdf:
+                  type: number
+                  description: New in schemaVersion 2. Your own offerPricePerKgCdf, echoed back.
+                totalAmountCdf:
+                  type: number
+                  description: New in schemaVersion 2. quantityKg × unitPriceCdf.
+                currency:
+                  type: string
+                  enum: [CDF]
+                  description: New in schemaVersion 2.
                 commodity:
                   type: string
       responses:
